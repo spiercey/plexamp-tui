@@ -3,6 +3,8 @@
 **Plexamp TUI** is a terminal-based controller for [Plexamp](https://plexamp.com) headless instances.
 It allows you to select a Plexamp server, view the currently playing track, playback state, progress, and control playback and volume directly from your terminal.
 
+<img width="1276" height="710" alt="image" src="https://github.com/user-attachments/assets/b74524d4-9090-4364-a8cb-b508e96dfe8a" />
+
 ---
 
 ## Features
