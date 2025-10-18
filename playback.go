@@ -154,7 +154,7 @@ func (p playbackPopup) View() string {
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8888ff")).
 		MarginTop(1).
-		Render("↑/↓ navigate • p to play • Esc cancel")
+		Render("↑/↓ navigate • Enter or p to play • Esc cancel")
 
 	content := lipgloss.JoinVertical(lipgloss.Left, p.list.View(), help)
 	return border.Render(content)

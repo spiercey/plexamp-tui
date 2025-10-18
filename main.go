@@ -242,6 +242,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle popup input FIRST - before any other key handling
+		if m.showPlaybackPopup {
+			switch msg.String() {
+			case "esc":
+				logDebug("Closing popup with Esc")
+				m.showPlaybackPopup = false
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.playbackPopup, cmd = m.playbackPopup.Update(msg)
+				if m.playbackPopup.selected != "" {
+					// User selected a playback item
+					logDebug(fmt.Sprintf("Main detected selection: %s", m.playbackPopup.selected))
+					m.showPlaybackPopup = false
+					return m, m.triggerPlaybackCmd(m.playbackPopup.selected)
+				}
+				return m, cmd
+			}
+		}
+
+		// Main app key handlers (only processed when popup is NOT open)
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -305,26 +326,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.playbackPopup = newPlaybackPopup(m.playbackConfig.Items, m.width, m.height)
 			}
 			return m, nil
-		}
-
-		// Handle popup input - must be before other key handling
-		if m.showPlaybackPopup {
-			switch msg.String() {
-			case "esc":
-				logDebug("Closing popup with Esc")
-				m.showPlaybackPopup = false
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.playbackPopup, cmd = m.playbackPopup.Update(msg)
-				if m.playbackPopup.selected != "" {
-					// User selected a playback item
-					logDebug(fmt.Sprintf("Main detected selection: %s", m.playbackPopup.selected))
-					m.showPlaybackPopup = false
-					return m, m.triggerPlaybackCmd(m.playbackPopup.selected)
-				}
-				return m, cmd
-			}
 		}
 
 	case pollMsg:
