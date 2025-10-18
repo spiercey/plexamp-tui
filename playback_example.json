@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "name": "Screaming Females Radio",
+      "url": "https://listen.plex.tv/player/playback/playMedia?address=YOUR_SERVER&machineIdentifier=YOUR_MACHINE_ID&key=/library/sections/1/stations/12345&type=music"
+    },
+    {
+      "name": "Favorite Playlist",
+      "url": "https://listen.plex.tv/player/playback/playMedia?address=YOUR_SERVER&machineIdentifier=YOUR_MACHINE_ID&key=/playlists/67890&type=music"
+    },
+    {
+      "name": "Album Example",
+      "url": "https://listen.plex.tv/player/playback/playMedia?address=YOUR_SERVER&machineIdentifier=YOUR_MACHINE_ID&key=/library/metadata/11111&type=music"
+    }
+  ]
+}

@@ -83,6 +83,7 @@ func (i item) FilterValue() string { return string(i) }
 
 type model struct {
 	list            list.Model
+	playbackList    list.Model
 	selected        string
 	status          string
 	width           int
@@ -97,6 +98,10 @@ type model struct {
 	usingDefaultCfg bool
 
 	timelineRequestID int
+
+	// Panel mode: "servers" or "playback"
+	panelMode      string
+	playbackConfig *PlaybackConfig
 }
 
 type MediaContainer struct {
@@ -131,14 +136,25 @@ type trackMsgWithState struct {
 	RequestID int
 }
 
+type playbackTriggeredMsg struct {
+	success bool
+	err     error
+}
+
+// Global debug flag
+var debugMode bool
+
 // =====================
 // Main
 // =====================
 
 func main() {
-	// CLI flag for custom config path
+	// CLI flags
 	configFlag := flag.String("config", "", "Path to configuration file (optional)")
+	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
+
+	debugMode = *debugFlag
 
 	var cfg *Config
 	var cfgPath string
@@ -186,10 +202,34 @@ func main() {
 		l.Select(0)
 	}
 
+	// Load playback config
+	playbackCfgPath, _ := playbackConfigPath()
+	playbackCfg, err := loadPlaybackConfig(playbackCfgPath)
+	if err != nil && os.IsNotExist(err) {
+		fmt.Printf("No playback config found, creating default one at %s\n", playbackCfgPath)
+		if err := saveDefaultPlaybackConfig(playbackCfgPath); err != nil {
+			fmt.Println("Warning: Could not create default playback config:", err)
+		}
+		playbackCfg, _ = loadPlaybackConfig(playbackCfgPath)
+	}
+
+	// Create playback list
+	var playbackItems []list.Item
+	if playbackCfg != nil {
+		for _, pb := range playbackCfg.Items {
+			playbackItems = append(playbackItems, item(pb.Name))
+		}
+	}
+	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
+	playbackList.Title = "Select Playback"
+
 	m := model{
 		list:            l,
+		playbackList:    playbackList,
 		selected:        string(items[0].(item)),
 		usingDefaultCfg: usingDefault || items[0].(item) == "127.0.0.1",
+		playbackConfig:  playbackCfg,
+		panelMode:       "servers",
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -217,9 +257,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(msg.Width/2-2, msg.Height-4)
+		m.playbackList.SetSize(msg.Width/2-2, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle playback selection (when in playback mode)
+		if m.panelMode == "playback" {
+			switch msg.String() {
+			case "enter":
+				// Select playback item - don't switch back to servers
+				if selected, ok := m.playbackList.SelectedItem().(item); ok {
+					// Find the matching playback config item
+					for _, pb := range m.playbackConfig.Items {
+						if pb.Name == string(selected) {
+							logDebug(fmt.Sprintf("Selected playback: %s -> %s", pb.Name, pb.URL))
+							return m, m.triggerPlaybackCmd(pb.URL)
+						}
+					}
+				}
+				return m, nil
+			}
+		}
+
+		// Main app key handlers (only processed when popup is NOT open)
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -274,6 +334,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.setVolume(newVol)
 			m.lastCommand = fmt.Sprintf("Volume %d", newVol)
+
+		case "s", "tab":
+			// Toggle between servers and playback panels
+			if m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
+				if m.panelMode == "servers" {
+					logDebug(fmt.Sprintf("Switching to playback panel with %d items", len(m.playbackConfig.Items)))
+					m.panelMode = "playback"
+				} else {
+					logDebug("Switching to servers panel")
+					m.panelMode = "servers"
+				}
+			}
+			return m, nil
 		}
 
 	case pollMsg:
@@ -299,10 +372,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.status = fmt.Sprintf("Error: %v", msg.err)
 		return m, nil
+
+	case playbackTriggeredMsg:
+		if msg.success {
+			m.lastCommand = "Playback Started"
+			m.status = "Playback triggered successfully"
+		} else {
+			m.lastCommand = "Playback Failed"
+			m.status = fmt.Sprintf("Playback error: %v", msg.err)
+		}
+		return m, nil
 	}
 
+	// Update the appropriate list based on panel mode
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	if m.panelMode == "playback" {
+		m.playbackList, cmd = m.playbackList.Update(msg)
+	} else {
+		m.list, cmd = m.list.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -310,7 +398,15 @@ func (m model) View() string {
 	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ffff")).Render("🎧 Plexamp Control")
 
-	leftPanel := border.Width(m.width/2 - 2).Render(m.list.View())
+	// Show appropriate list based on panel mode
+	var leftPanelContent string
+	if m.panelMode == "playback" {
+		leftPanelContent = m.playbackList.View()
+	} else {
+		leftPanelContent = m.list.View()
+	}
+
+	leftPanel := border.Width(m.width/2 - 2).Render(leftPanelContent)
 	rightPanel := border.Width(m.width/2 - 2).Render(m.rightPanelView())
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
@@ -356,9 +452,13 @@ func (m model) rightPanelView() string {
 		info.Render("Volume"), m.volume,
 	)
 
-	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(
-		"Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  q = Quit",
-	)
+	// Show current panel mode
+	// panelMode := map[string]string{"servers": "Servers", "playback": "Playlists"}[m.panelMode]
+	// panelInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Render(
+	// 	fmt.Sprintf("Left Panel: %s", panelMode))
+
+	controlsText := "Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s/Tab = Toggle Panel\n  q = Quit"
+	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n\n%s", body, controls)
 }
@@ -513,3 +613,19 @@ func (m *model) setVolume(v int) {
 	go func() { _, _ = http.Get(url) }()
 }
 
+func (m *model) triggerPlaybackCmd(fullURL string) tea.Cmd {
+	if m.selected == "" {
+		return func() tea.Msg {
+			return playbackTriggeredMsg{success: false, err: fmt.Errorf("no server selected")}
+		}
+	}
+
+	serverIP := m.selected
+	return func() tea.Msg {
+		err := triggerPlayback(serverIP, fullURL)
+		if err != nil {
+			return playbackTriggeredMsg{success: false, err: err}
+		}
+		return playbackTriggeredMsg{success: true}
+	}
+}
