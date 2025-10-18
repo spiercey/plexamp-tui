@@ -21,7 +21,9 @@ This application doesn't authenticate with Plex. Therefore it is limited to loca
 
 The main limitation is around starting playback. This seems to only be available through the cloud plex server. So you will need to start the play back through some other controller. IE the mobile app, web app, or my [NFC Controller](https://github.com/spiercey/plexamp-nfc-uart-python).
 
-Maybe one day I will update this with Authentication so we can view music and start.
+There is a local playback feature that allows you to start playback on your Plexamp devices using pre-configured playback URLs, similar to NFC tag functionality. See the [PLAYBACK_FEATURE.md](PLAYBACK_FEATURE.md) for more information on how to configure it.
+
+Maybe one day I will update this with Authentication so we can view music and start playback.
 
 ---
 

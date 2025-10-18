@@ -83,6 +83,7 @@ func (i item) FilterValue() string { return string(i) }
 
 type model struct {
 	list            list.Model
+	playbackList    list.Model
 	selected        string
 	status          string
 	width           int
@@ -98,10 +99,9 @@ type model struct {
 
 	timelineRequestID int
 
-	// Playback popup
-	showPlaybackPopup bool
-	playbackPopup     playbackPopup
-	playbackConfig    *PlaybackConfig
+	// Panel mode: "servers" or "playback"
+	panelMode      string
+	playbackConfig *PlaybackConfig
 }
 
 type MediaContainer struct {
@@ -213,11 +213,23 @@ func main() {
 		playbackCfg, _ = loadPlaybackConfig(playbackCfgPath)
 	}
 
+	// Create playback list
+	var playbackItems []list.Item
+	if playbackCfg != nil {
+		for _, pb := range playbackCfg.Items {
+			playbackItems = append(playbackItems, item(pb.Name))
+		}
+	}
+	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
+	playbackList.Title = "Select Playback"
+
 	m := model{
 		list:            l,
+		playbackList:    playbackList,
 		selected:        string(items[0].(item)),
 		usingDefaultCfg: usingDefault || items[0].(item) == "127.0.0.1",
 		playbackConfig:  playbackCfg,
+		panelMode:       "servers",
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -245,26 +257,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(msg.Width/2-2, msg.Height-4)
+		m.playbackList.SetSize(msg.Width/2-2, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
-		// Handle popup input FIRST - before any other key handling
-		if m.showPlaybackPopup {
+		// Handle playback selection (when in playback mode)
+		if m.panelMode == "playback" {
 			switch msg.String() {
-			case "esc":
-				logDebug("Closing popup with Esc")
-				m.showPlaybackPopup = false
-				return m, nil
-			default:
-				var cmd tea.Cmd
-				m.playbackPopup, cmd = m.playbackPopup.Update(msg)
-				if m.playbackPopup.selected != "" {
-					// User selected a playback item
-					logDebug(fmt.Sprintf("Main detected selection: %s", m.playbackPopup.selected))
-					m.showPlaybackPopup = false
-					return m, m.triggerPlaybackCmd(m.playbackPopup.selected)
+			case "enter":
+				// Select playback item - don't switch back to servers
+				if selected, ok := m.playbackList.SelectedItem().(item); ok {
+					// Find the matching playback config item
+					for _, pb := range m.playbackConfig.Items {
+						if pb.Name == string(selected) {
+							logDebug(fmt.Sprintf("Selected playback: %s -> %s", pb.Name, pb.URL))
+							return m, m.triggerPlaybackCmd(pb.URL)
+						}
+					}
 				}
-				return m, cmd
+				return m, nil
 			}
 		}
 
@@ -324,12 +335,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setVolume(newVol)
 			m.lastCommand = fmt.Sprintf("Volume %d", newVol)
 
-		case "s":
-			// Show playback selection popup (only if not already open)
-			if !m.showPlaybackPopup && m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
-				logDebug(fmt.Sprintf("Opening playback popup with %d items", len(m.playbackConfig.Items)))
-				m.showPlaybackPopup = true
-				m.playbackPopup = newPlaybackPopup(m.playbackConfig.Items, m.width, m.height)
+		case "s", "tab":
+			// Toggle between servers and playback panels
+			if m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
+				if m.panelMode == "servers" {
+					logDebug(fmt.Sprintf("Switching to playback panel with %d items", len(m.playbackConfig.Items)))
+					m.panelMode = "playback"
+				} else {
+					logDebug("Switching to servers panel")
+					m.panelMode = "servers"
+				}
 			}
 			return m, nil
 		}
@@ -369,8 +384,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Update the appropriate list based on panel mode
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	if m.panelMode == "playback" {
+		m.playbackList, cmd = m.playbackList.Update(msg)
+	} else {
+		m.list, cmd = m.list.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -378,20 +398,19 @@ func (m model) View() string {
 	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ffff")).Render("🎧 Plexamp Control")
 
-	leftPanel := border.Width(m.width/2 - 2).Render(m.list.View())
+	// Show appropriate list based on panel mode
+	var leftPanelContent string
+	if m.panelMode == "playback" {
+		leftPanelContent = m.playbackList.View()
+	} else {
+		leftPanelContent = m.list.View()
+	}
+
+	leftPanel := border.Width(m.width/2 - 2).Render(leftPanelContent)
 	rightPanel := border.Width(m.width/2 - 2).Render(m.rightPanelView())
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-	mainView := lipgloss.JoinVertical(lipgloss.Left, title, content)
-
-	// Overlay popup if active
-	if m.showPlaybackPopup {
-		popup := m.playbackPopup.View()
-		// Center the popup
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup, lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("#333333")))
-	}
-
-	return mainView
+	return lipgloss.JoinVertical(lipgloss.Left, title, content)
 }
 
 func (m model) rightPanelView() string {
@@ -433,9 +452,13 @@ func (m model) rightPanelView() string {
 		info.Render("Volume"), m.volume,
 	)
 
-	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(
-		"Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s = Start Playback\n  q = Quit",
-	)
+	// Show current panel mode
+	// panelMode := map[string]string{"servers": "Servers", "playback": "Playlists"}[m.panelMode]
+	// panelInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Render(
+	// 	fmt.Sprintf("Left Panel: %s", panelMode))
+
+	controlsText := "Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s/Tab = Toggle Panel\n  q = Quit"
+	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n\n%s", body, controls)
 }
@@ -606,4 +629,3 @@ func (m *model) triggerPlaybackCmd(fullURL string) tea.Cmd {
 		return playbackTriggeredMsg{success: true}
 	}
 }
-

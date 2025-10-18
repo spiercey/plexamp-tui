@@ -8,10 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // =====================
@@ -70,94 +66,6 @@ func saveDefaultPlaybackConfig(path string) error {
 
 	data, _ := json.MarshalIndent(defaultCfg, "", "  ")
 	return os.WriteFile(path, data, 0644)
-}
-
-// =====================
-// Playback Popup Model
-// =====================
-
-type playbackPopup struct {
-	list     list.Model
-	items    []PlaybackItem
-	width    int
-	height   int
-	selected string
-}
-
-type playbackItem struct {
-	name string
-	url  string
-}
-
-func (i playbackItem) Title() string       { return i.name }
-func (i playbackItem) Description() string { return "" }
-func (i playbackItem) FilterValue() string { return i.name }
-
-func newPlaybackPopup(items []PlaybackItem, width, height int) playbackPopup {
-	var listItems []list.Item
-	for _, item := range items {
-		listItems = append(listItems, playbackItem{name: item.Name, url: item.URL})
-	}
-
-	l := list.New(listItems, list.NewDefaultDelegate(), width-4, height-6)
-	l.Title = "Select Playback"
-	l.SetShowHelp(false)
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(false)
-
-	return playbackPopup{
-		list:   l,
-		items:  items,
-		width:  width,
-		height: height,
-	}
-}
-
-func (p playbackPopup) Init() tea.Cmd {
-	return nil
-}
-
-func (p playbackPopup) Update(msg tea.Msg) (playbackPopup, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		keyStr := msg.String()
-		logDebug(fmt.Sprintf("Popup received key: '%s' (type: %d)", keyStr, msg.Type))
-		// Handle selection keys BEFORE passing to list
-		// Using 'p' for play since Enter isn't being received
-		if keyStr == "enter" || keyStr == "" || keyStr == "p" || msg.Type == tea.KeyEnter {
-			if selected, ok := p.list.SelectedItem().(playbackItem); ok {
-				logDebug(fmt.Sprintf("Selected item: %s -> %s", selected.name, selected.url))
-				p.selected = selected.url
-				return p, nil
-			} else {
-				logDebug("No item selected or type assertion failed")
-			}
-			// Don't pass to the list
-			return p, nil
-		}
-	}
-
-	// Pass other keys to the list for navigation
-	var cmd tea.Cmd
-	p.list, cmd = p.list.Update(msg)
-	return p, cmd
-}
-
-func (p playbackPopup) View() string {
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00ffff")).
-		Padding(1, 2).
-		Width(p.width - 4).
-		Height(p.height - 4)
-
-	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#8888ff")).
-		MarginTop(1).
-		Render("↑/↓ navigate • Enter or p to play • Esc cancel")
-
-	content := lipgloss.JoinVertical(lipgloss.Left, p.list.View(), help)
-	return border.Render(content)
 }
 
 // =====================
