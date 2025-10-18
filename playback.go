@@ -193,6 +193,11 @@ func triggerPlayback(serverIP, fullURL string) error {
 }
 
 func logDebug(msg string) {
+	// Only log if debug mode is enabled
+	if !debugMode {
+		return
+	}
+	
 	// Log to a file in the config directory for debugging
 	logPath, err := playbackConfigPath()
 	if err != nil {

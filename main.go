@@ -141,14 +141,20 @@ type playbackTriggeredMsg struct {
 	err     error
 }
 
+// Global debug flag
+var debugMode bool
+
 // =====================
 // Main
 // =====================
 
 func main() {
-	// CLI flag for custom config path
+	// CLI flags
 	configFlag := flag.String("config", "", "Path to configuration file (optional)")
+	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
+
+	debugMode = *debugFlag
 
 	var cfg *Config
 	var cfgPath string
