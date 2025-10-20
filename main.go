@@ -97,7 +97,7 @@ type model struct {
 	positionMs      int
 	lastUpdate      time.Time
 	usingDefaultCfg bool
-	shuffle         bool  // Tracks shuffle state
+	shuffle         bool // Tracks shuffle state
 
 	timelineRequestID int
 
@@ -199,7 +199,7 @@ func main() {
 	}
 
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Select Plexamp Instance"
+	l.Title = "Select Instance"
 	if len(items) > 0 {
 		l.Select(0)
 	}
@@ -231,7 +231,8 @@ func main() {
 		selected:        string(items[0].(item)),
 		usingDefaultCfg: usingDefault || items[0].(item) == "127.0.0.1",
 		playbackConfig:  playbackCfg,
-		panelMode:       "servers",
+		panelMode:       "playback",
+		shuffle:         true, // Default shuffle to ON
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -258,8 +259,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(msg.Width/2-2, msg.Height-4)
-		m.playbackList.SetSize(msg.Width/2-2, msg.Height-4)
+		// Set list sizes for 2-column layout (left panel takes half width)
+		m.list.SetSize(msg.Width/2-4, msg.Height-4)
+		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -423,7 +425,7 @@ func (m model) View() string {
 	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ffff")).Render("🎧 Plexamp Control")
 
-	// Show appropriate list based on panel mode
+	// Build left panel content
 	var leftPanelContent string
 	if m.panelMode == "playback" {
 		leftPanelContent = m.playbackList.View()
@@ -431,21 +433,21 @@ func (m model) View() string {
 		leftPanelContent = m.list.View()
 	}
 
+	// Left panel
 	leftPanel := border.Width(m.width/2 - 2).Render(leftPanelContent)
-	rightPanel := border.Width(m.width/2 - 2).Render(m.rightPanelView())
 
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
+	// Right side has two stacked panels
+	playbackPanel := border.Width(m.width/2 - 2).Render(m.playbackStatusView())
+	controlsPanel := border.Width(m.width/2 - 2).Render(m.appControlsView())
+	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, controlsPanel)
+
+	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightSide)
 	return lipgloss.JoinVertical(lipgloss.Left, title, content)
 }
 
-func (m model) rightPanelView() string {
+func (m model) playbackStatusView() string {
 	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
 	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
-
-	selected := "None"
-	if m.selected != "" {
-		selected = m.selected
-	}
 
 	state := "⏸️ Paused"
 	if m.isPlaying {
@@ -461,36 +463,58 @@ func (m model) rightPanelView() string {
 	progress := formatTime(elapsed) + " / " + formatTime(m.durationMs)
 	bar := progressBar(elapsed, m.durationMs, 20)
 
-	body := ""
-	if m.usingDefaultCfg {
-		body += lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(
-			"⚠️ Using default config (127.0.0.1), may not find a server. Update your config!\n\n")
-	}
-
+	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("Now Playing") + "\n\n"
 	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %d\n",
-		info.Render("Selected Instance"), value.Render(selected),
-		info.Render("Playback State"), value.Render(state),
-		info.Render("Last Command"), value.Render(m.lastCommand),
-		info.Render("Now Playing"), value.Render(current),
+		"%s: %s\n%s: %s\n%s: %s\n%s: %d\n",
+		info.Render("State"), value.Render(state),
+		info.Render("Track"), value.Render(current),
 		info.Render("Progress"), value.Render(bar+"  "+progress),
 		info.Render("Volume"), m.volume,
 	)
 
-	// Show current panel mode
-	// panelMode := map[string]string{"servers": "Servers", "playback": "Playlists"}[m.panelMode]
-	// panelInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Render(
-	// 	fmt.Sprintf("Left Panel: %s", panelMode))
+	return body
+}
+
+func (m model) appControlsView() string {
+	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
+	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
+
+	selected := "None"
+	if m.selected != "" {
+		selected = m.selected
+	}
+
+	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("App Info") + "\n\n"
+
+	if m.usingDefaultCfg {
+		body += lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(
+			"⚠️ Using default config\n\n")
+	}
+
+	// Shuffle status with color
+	var shuffleValue string
+	if m.shuffle {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
+	} else {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
+	}
+
+	body += fmt.Sprintf(
+		"%s: %s\n%s: %s\n%s: %s\n",
+		info.Render("Server"), value.Render(selected),
+		info.Render("Shuffle"), shuffleValue,
+		info.Render("Last Command"), value.Render(m.lastCommand),
+	)
 
 	shuffleStatus := "OFF"
 	if m.shuffle {
 		shuffleStatus = "ON"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s/Tab = Toggle Panel\n  h = Toggle Shuffle (%s)\n  q = Quit", shuffleStatus)
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
-	return fmt.Sprintf("%s\n\n%s", body, controls)
+	return fmt.Sprintf("%s\n%s", body, controls)
 }
 
 // =====================
