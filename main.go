@@ -280,6 +280,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle playback selection (when in playback mode)
 		if m.panelMode == "playback" {
 			switch msg.String() {
+			case "a":
+				// Add new playback item
+				m.initEditMode("playback", -1)
+				return m, nil
+
 			case "e":
 				// Edit selected playback item
 				index := m.playbackList.Index()
@@ -318,6 +323,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		case "a":
+			// Add new server (only in servers mode)
+			if m.panelMode == "servers" {
+				m.initEditMode("server", -1)
+				return m, nil
+			}
 
 		case "e":
 			// Edit selected server (only in servers mode)
@@ -544,7 +556,7 @@ func (m model) appControlsView() string {
 		shuffleStatus = "ON"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  a Add  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n%s", body, controls)

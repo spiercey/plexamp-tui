@@ -15,6 +15,7 @@ import (
 // =====================
 
 // initEditMode sets up the edit mode for either server or playback items
+// index of -1 means adding a new item
 func (m *model) initEditMode(editType string, index int) {
 	m.panelMode = "edit"
 	m.editMode = editType
@@ -29,8 +30,8 @@ func (m *model) initEditMode(editType string, index int) {
 		ti.CharLimit = 256
 		ti.Width = 50
 
-		// Get current value
-		if index < len(m.list.Items()) {
+		// Get current value (only if editing, not adding)
+		if index >= 0 && index < len(m.list.Items()) {
 			if currentItem, ok := m.list.Items()[index].(item); ok {
 				ti.SetValue(string(currentItem))
 			}
@@ -50,8 +51,8 @@ func (m *model) initEditMode(editType string, index int) {
 		urlInput.CharLimit = 1000
 		urlInput.Width = 50
 
-		// Get current values
-		if m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
+		// Get current values (only if editing, not adding)
+		if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
 			nameInput.SetValue(m.playbackConfig.Items[index].Name)
 			urlInput.SetValue(m.playbackConfig.Items[index].URL)
 		}
@@ -157,8 +158,12 @@ func (m *model) saveServerEdit() error {
 		return err
 	}
 
-	// Update the value
-	if m.editIndex < len(cfg.Instances) {
+	// Update or add the value
+	if m.editIndex == -1 {
+		// Adding new item
+		cfg.Instances = append(cfg.Instances, newValue)
+	} else if m.editIndex < len(cfg.Instances) {
+		// Editing existing item
 		cfg.Instances[m.editIndex] = newValue
 	} else {
 		return fmt.Errorf("invalid index")
@@ -215,8 +220,15 @@ func (m *model) savePlaybackEdit() error {
 		return err
 	}
 
-	// Update the value
-	if m.editIndex < len(cfg.Items) {
+	// Update or add the value
+	if m.editIndex == -1 {
+		// Adding new item
+		cfg.Items = append(cfg.Items, PlaybackItem{
+			Name: newName,
+			URL:  newURL,
+		})
+	} else if m.editIndex < len(cfg.Items) {
+		// Editing existing item
 		cfg.Items[m.editIndex].Name = newName
 		cfg.Items[m.editIndex].URL = newURL
 	} else {
@@ -251,15 +263,19 @@ func (m *model) savePlaybackEdit() error {
 // editPanelView renders the edit panel
 func (m model) editPanelView() string {
 	var content string
+	action := "Edit"
+	if m.editIndex == -1 {
+		action = "Add"
+	}
 
 	if m.editMode == "server" {
-		content = "Edit Server\n\n"
+		content = fmt.Sprintf("%s Server\n\n", action)
 		content += "Hostname/IP:\n"
 		if len(m.editInputs) > 0 {
 			content += m.editInputs[0].View() + "\n"
 		}
 	} else if m.editMode == "playback" {
-		content = "Edit Playback Item\n\n"
+		content = fmt.Sprintf("%s Playback Item\n\n", action)
 		content += "Name:\n"
 		if len(m.editInputs) > 0 {
 			content += m.editInputs[0].View() + "\n\n"

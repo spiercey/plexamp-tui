@@ -74,6 +74,11 @@ with the default Plexamp instance:
 > ⚠️ **Warning:** Using `127.0.0.1` as the default server may not find any running Plexamp instances.
 > Update the config file with your server IP(s) to connect properly.
 
+**Editing from the TUI:** You can also add or edit servers directly from within the app:
+- Press **`a`** to add a new server
+- Press **`e`** to edit the selected server
+- Changes are saved automatically to the config file
+
 See the `config.example.json` file for how you can reference your servers. 
 
 ### Custom Config Path
