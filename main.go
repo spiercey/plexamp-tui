@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -101,9 +102,15 @@ type model struct {
 
 	timelineRequestID int
 
-	// Panel mode: "servers" or "playback"
+	// Panel mode: "servers", "playback", or "edit"
 	panelMode      string
 	playbackConfig *PlaybackConfig
+	
+	// Edit mode fields
+	editMode       string // "server" or "playback"
+	editIndex      int    // Index of item being edited
+	editInputs     []textinput.Model
+	editFocusIndex int
 }
 
 type MediaContainer struct {
@@ -265,9 +272,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle edit mode separately
+		if m.panelMode == "edit" {
+			return m.handleEditUpdate(msg)
+		}
+
 		// Handle playback selection (when in playback mode)
 		if m.panelMode == "playback" {
 			switch msg.String() {
+			case "e":
+				// Edit selected playback item
+				index := m.playbackList.Index()
+				m.initEditMode("playback", index)
+				return m, nil
+
 			case "enter":
 				// Select playback item - don't switch back to servers
 				if selected, ok := m.playbackList.SelectedItem().(item); ok {
@@ -300,6 +318,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		case "e":
+			// Edit selected server (only in servers mode)
+			if m.panelMode == "servers" {
+				index := m.list.Index()
+				m.initEditMode("server", index)
+				return m, nil
+			}
 
 		case "enter":
 			selected, ok := m.list.SelectedItem().(item)
@@ -425,6 +451,13 @@ func (m model) View() string {
 	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#00ffff")).Render("🎧 Plexamp Control")
 
+	// Show edit panel if in edit mode
+	if m.panelMode == "edit" {
+		editContent := m.editPanelView()
+		editPanel := border.Width(m.width - 4).Render(editContent)
+		return lipgloss.JoinVertical(lipgloss.Left, title, editPanel)
+	}
+
 	// Build left panel content
 	var leftPanelContent string
 	if m.panelMode == "playback" {
@@ -511,7 +544,7 @@ func (m model) appControlsView() string {
 		shuffleStatus = "ON"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n%s", body, controls)
