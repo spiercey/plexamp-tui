@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -96,6 +97,7 @@ type model struct {
 	positionMs      int
 	lastUpdate      time.Time
 	usingDefaultCfg bool
+	shuffle         bool  // Tracks shuffle state
 
 	timelineRequestID int
 
@@ -270,8 +272,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Find the matching playback config item
 					for _, pb := range m.playbackConfig.Items {
 						if pb.Name == string(selected) {
-							logDebug(fmt.Sprintf("Selected playback: %s -> %s", pb.Name, pb.URL))
-							return m, m.triggerPlaybackCmd(pb.URL)
+							// Modify URL based on shuffle state
+							modifiedURL := pb.URL
+							u, err := url.Parse(pb.URL)
+							if err == nil {
+								q := u.Query()
+								if m.shuffle {
+									q.Set("shuffle", "1")
+								} else {
+									q.Del("shuffle")
+								}
+								u.RawQuery = q.Encode()
+								modifiedURL = u.String()
+							}
+							logDebug(fmt.Sprintf("Selected playback: %s -> %s (shuffle: %v)", pb.Name, modifiedURL, m.shuffle))
+							return m, m.triggerPlaybackCmd(modifiedURL)
 						}
 					}
 				}
@@ -345,6 +360,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					logDebug("Switching to servers panel")
 					m.panelMode = "servers"
 				}
+			}
+			return m, nil
+
+		case "h":
+			// Toggle shuffle state
+			m.shuffle = !m.shuffle
+			if m.shuffle {
+				m.lastCommand = "Shuffle: ON"
+			} else {
+				m.lastCommand = "Shuffle: OFF"
 			}
 			return m, nil
 		}
@@ -457,7 +482,12 @@ func (m model) rightPanelView() string {
 	// panelInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00")).Bold(true).Render(
 	// 	fmt.Sprintf("Left Panel: %s", panelMode))
 
-	controlsText := "Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s/Tab = Toggle Panel\n  q = Quit"
+	shuffleStatus := "OFF"
+	if m.shuffle {
+		shuffleStatus = "ON"
+	}
+
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ to navigate\n  Enter to select\n  p = Play/Pause\n  n = Next\n  b = Back\n  [,+ / ],- = Vol - / Vol +\n  s/Tab = Toggle Panel\n  h = Toggle Shuffle (%s)\n  q = Quit", shuffleStatus)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n\n%s", body, controls)
