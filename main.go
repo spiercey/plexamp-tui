@@ -94,6 +94,7 @@ type model struct {
 	playbackList      list.Model
 	artistList        list.Model // Plex artist browse list
 	albumList         list.Model // Plex album browse list
+	playlistList      list.Model // Plex playlist browse list
 	selected          string
 	status            string
 	width             int
@@ -259,6 +260,7 @@ func main() {
 		playbackList:      playbackList,
 		artistList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		albumList:         list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		playlistList:      list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		selected:          string(items[0].(item)),
 		usingDefaultCfg:   usingDefault || items[0].(item) == "127.0.0.1",
 		playbackConfig:    playbackCfg,
@@ -297,6 +299,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
 		m.artistList.SetSize(msg.Width/2-4, msg.Height-4)
 		m.albumList.SetSize(msg.Width/2-4, msg.Height-4)
+		m.playlistList.SetSize(msg.Width/2-4, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -326,6 +329,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			modelPtr := &m
 			// Call handleAlbumBrowseUpdate which will modify the model directly
 			updatedModel, cmd := modelPtr.handleAlbumBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
+		// Handle playlist browse mode
+		if m.panelMode == "plex-playlists" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handlePlaylistBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handlePlaylistBrowseUpdate(msg)
 			// The updated model might be a different instance, so we need to update our local copy
 			if updatedModel != nil {
 				if m2, ok := updatedModel.(model); ok {
@@ -462,6 +480,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Plex authentication required (run with --auth)"
 			}
 			return m, nil
+
+		case "5":
+			// Open playlist browse (if authenticated)
+			if m.plexAuthenticated && m.config != nil {
+				m.initPlaylistBrowse()
+				return m, m.fetchPlaylistsCmd()
+			} else {
+				m.status = "Plex authentication required (run with --auth)"
+			}
+			return m, nil
+
 		default:
 			// Try the common controls
 			if cmd, handled := m.handleControl(key); handled {
@@ -530,6 +559,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case playlistsFetchedMsg:
+		// Forward the message to the playlist browse handler
+		if m.panelMode == "plex-playlists" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handlePlaylistBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Update the appropriate list based on panel mode
@@ -540,6 +583,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.artistList, cmd = m.artistList.Update(msg)
 	} else if m.panelMode == "plex-albums" {
 		m.albumList, cmd = m.albumList.Update(msg)
+	} else if m.panelMode == "plex-playlists" {
+		m.playlistList, cmd = m.playlistList.Update(msg)
 	} else {
 		m.list, cmd = m.list.Update(msg)
 	}
@@ -565,6 +610,8 @@ func (m model) View() string {
 		leftPanelContent = m.artistList.View()
 	} else if m.panelMode == "plex-albums" {
 		leftPanelContent = m.albumList.View()
+	} else if m.panelMode == "plex-playlists" {
+		leftPanelContent = m.playlistList.View()
 	} else {
 		leftPanelContent = m.list.View()
 	}
