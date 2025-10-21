@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,7 +23,10 @@ import (
 // =====================
 
 type Config struct {
-	Instances []string `json:"instances"`
+	Instances      []string `json:"instances"`
+	ServerID       string   `json:"server_id"`        // Plex server ID for building playback URLs
+	PlexServerAddr string   `json:"plex_server_addr"` // Plex server address for API calls (e.g., "jakku.lan:32400")
+	PlexLibraryID  string   `json:"plex_library_id"`  // Music library ID for browsing
 }
 
 func configPath() (string, error) {
@@ -57,6 +59,7 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("no instances defined in config file")
 	}
 
+	logDebug(fmt.Sprintf("Loaded config: %v", cfg))
 	return &cfg, nil
 }
 
@@ -67,6 +70,9 @@ func saveDefaultConfig(path string) error {
 		Instances: []string{
 			"127.0.0.1",
 		},
+		ServerID:       "YOUR_SERVER_ID_HERE",
+		PlexServerAddr: "hostname:32400",
+		PlexLibraryID:  "15",
 	}
 
 	data, _ := json.MarshalIndent(defaultCfg, "", "  ")
@@ -84,28 +90,30 @@ func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return string(i) }
 
 type model struct {
-	list            list.Model
-	playbackList    list.Model
-	selected        string
-	status          string
-	width           int
-	height          int
-	isPlaying       bool
-	lastCommand     string
-	currentTrack    string
-	volume          int
-	durationMs      int
-	positionMs      int
-	lastUpdate      time.Time
-	usingDefaultCfg bool
-	shuffle         bool // Tracks shuffle state
-
+	list              list.Model
+	playbackList      list.Model
+	artistList        list.Model // Plex artist browse list
+	selected          string
+	status            string
+	width             int
+	height            int
+	isPlaying         bool
+	lastCommand       string
+	currentTrack      string
+	volume            int
+	durationMs        int
+	positionMs        int
+	lastUpdate        time.Time
+	usingDefaultCfg   bool
+	shuffle           bool // Tracks shuffle state
+	plexAuthenticated bool // Plex authentication status
 	timelineRequestID int
 
-	// Panel mode: "servers", "playback", or "edit"
+	// Panel mode: "servers", "playback", "edit", "plex-servers", "plex-libraries", "plex-artists", "plex-albums"
 	panelMode      string
 	playbackConfig *PlaybackConfig
-	
+	config         *Config // Store config for server ID access
+
 	// Edit mode fields
 	editMode       string // "server" or "playback"
 	editIndex      int    // Index of item being edited
@@ -161,9 +169,22 @@ func main() {
 	// CLI flags
 	configFlag := flag.String("config", "", "Path to configuration file (optional)")
 	debugFlag := flag.Bool("debug", false, "Enable debug logging")
+	authFlag := flag.Bool("auth", false, "Authenticate with Plex.tv")
 	flag.Parse()
 
 	debugMode = *debugFlag
+
+	// Handle Plex authentication
+	if *authFlag {
+		fmt.Println("Starting Plex authentication...")
+		_, err := authenticateWithPlex()
+		if err != nil {
+			fmt.Printf("Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("\nAuthentication complete! You can now run plexamp-tui normally.")
+		return
+	}
 
 	var cfg *Config
 	var cfgPath string
@@ -233,13 +254,16 @@ func main() {
 	playbackList.Title = "Select Playback"
 
 	m := model{
-		list:            l,
-		playbackList:    playbackList,
-		selected:        string(items[0].(item)),
-		usingDefaultCfg: usingDefault || items[0].(item) == "127.0.0.1",
-		playbackConfig:  playbackCfg,
-		panelMode:       "playback",
-		shuffle:         true, // Default shuffle to ON
+		list:              l,
+		playbackList:      playbackList,
+		artistList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		selected:          string(items[0].(item)),
+		usingDefaultCfg:   usingDefault || items[0].(item) == "127.0.0.1",
+		playbackConfig:    playbackCfg,
+		config:            cfg,
+		panelMode:         "playback",
+		shuffle:           true, // Default shuffle to ON
+		plexAuthenticated: verifyPlexAuthentication(),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -269,6 +293,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Set list sizes for 2-column layout (left panel takes half width)
 		m.list.SetSize(msg.Width/2-4, msg.Height-4)
 		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
+		m.artistList.SetSize(msg.Width/2-4, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -277,8 +302,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleEditUpdate(msg)
 		}
 
+		// Handle artist browse mode
+		if m.panelMode == "plex-artists" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handleArtistBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handleArtistBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
 		// Handle playback selection (when in playback mode)
 		if m.panelMode == "playback" {
+			// Check if we're in filtering mode for the playback list
+			if m.playbackList.FilterState() == list.Filtering {
+				var cmd tea.Cmd
+				m.playbackList, cmd = m.playbackList.Update(msg)
+				return m, cmd
+			}
+
 			switch msg.String() {
 			case "a":
 				// Add new playback item
@@ -297,30 +344,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Find the matching playback config item
 					for _, pb := range m.playbackConfig.Items {
 						if pb.Name == string(selected) {
-							// Modify URL based on shuffle state
-							modifiedURL := pb.URL
-							u, err := url.Parse(pb.URL)
-							if err == nil {
-								q := u.Query()
-								if m.shuffle {
-									q.Set("shuffle", "1")
-								} else {
-									q.Del("shuffle")
-								}
-								u.RawQuery = q.Encode()
-								modifiedURL = u.String()
-							}
-							logDebug(fmt.Sprintf("Selected playback: %s -> %s (shuffle: %v)", pb.Name, modifiedURL, m.shuffle))
-							return m, m.triggerPlaybackCmd(modifiedURL)
+							logDebug(fmt.Sprintf("Selected playback: %s -> %s (shuffle: %v)", pb.Name, pb.URL, m.shuffle))
+							return m, m.triggerPlaybackCmd(pb.URL)
 						}
 					}
 				}
 				return m, nil
+
+				// Let the list handle single character input for filtering
+				// case " ", "/":
+				// 	var cmd tea.Cmd
+				// 	m.playbackList, cmd = m.playbackList.Update(msg)
+				// 	return m, cmd
+
+				// default:
+				// 	key := msg.String()
+				// 	if len(key) == 1 {
+				// 		var cmd tea.Cmd
+				// 		m.playbackList, cmd = m.playbackList.Update(msg)
+				// 		return m, cmd
+				// 	}
 			}
 		}
 
+		// Check if we're in filtering mode for the servers list
+		if m.panelMode == "servers" && m.list.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			return m, cmd
+		}
+
 		// Main app key handlers (only processed when popup is NOT open)
-		switch msg.String() {
+		key := msg.String()
+
+		switch key {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 
@@ -355,42 +412,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.pollTimeline()
 			}
 
-		case "p":
-			if m.isPlaying {
-				m.sendCommand("playback/pause")
-				m.isPlaying = false
-				m.lastCommand = "Pause"
-			} else {
-				m.sendCommand("playback/play")
-				m.isPlaying = true
-				m.lastCommand = "Play"
-			}
-
-		case "n":
-			m.sendCommand("playback/skipNext")
-			m.lastCommand = "Next"
-
-		case "b":
-			m.sendCommand("playback/skipPrevious")
-			m.lastCommand = "Previous"
-
-		case "+", "]":
-			newVol := m.volume + 5
-			if newVol > 100 {
-				newVol = 100
-			}
-			m.setVolume(newVol)
-			m.lastCommand = fmt.Sprintf("Volume %d", newVol)
-
-		case "-", "[":
-			newVol := m.volume - 5
-			if newVol < 0 {
-				newVol = 0
-			}
-			m.setVolume(newVol)
-			m.lastCommand = fmt.Sprintf("Volume %d", newVol)
-
-		case "s", "tab":
+		case "tab":
 			// Toggle between servers and playback panels
 			if m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
 				if m.panelMode == "servers" {
@@ -403,15 +425,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "h":
-			// Toggle shuffle state
-			m.shuffle = !m.shuffle
-			if m.shuffle {
-				m.lastCommand = "Shuffle: ON"
+		case "3":
+			// Open artist browse (if authenticated)
+			if m.plexAuthenticated && m.config != nil {
+				m.initArtistBrowse()
+				return m, m.fetchArtistsCmd()
 			} else {
-				m.lastCommand = "Shuffle: OFF"
+				m.status = "Plex authentication required (run with --auth)"
 			}
 			return m, nil
+
+		default:
+			// Try the common controls
+			if cmd, handled := m.handleControl(key); handled {
+				return m, cmd
+			}
 		}
 
 	case pollMsg:
@@ -447,12 +475,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Playback error: %v", msg.err)
 		}
 		return m, nil
+
+	case artistsFetchedMsg:
+		// Forward the message to the artist browse handler
+		if m.panelMode == "plex-artists" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handleArtistBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Update the appropriate list based on panel mode
 	var cmd tea.Cmd
 	if m.panelMode == "playback" {
 		m.playbackList, cmd = m.playbackList.Update(msg)
+	} else if m.panelMode == "plex-artists" {
+		m.artistList, cmd = m.artistList.Update(msg)
 	} else {
 		m.list, cmd = m.list.Update(msg)
 	}
@@ -474,6 +518,8 @@ func (m model) View() string {
 	var leftPanelContent string
 	if m.panelMode == "playback" {
 		leftPanelContent = m.playbackList.View()
+	} else if m.panelMode == "plex-artists" {
+		leftPanelContent = m.artistList.View()
 	} else {
 		leftPanelContent = m.list.View()
 	}
@@ -544,9 +590,18 @@ func (m model) appControlsView() string {
 		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
 	}
 
+	// Plex authentication status with color
+	var authValue string
+	if m.plexAuthenticated {
+		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("✓ Authenticated")
+	} else {
+		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("✗ Not Authenticated")
+	}
+
 	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n",
+		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
 		info.Render("Server"), value.Render(selected),
+		info.Render("Plex"), authValue,
 		info.Render("Shuffle"), shuffleValue,
 		info.Render("Last Command"), value.Render(m.lastCommand),
 	)
@@ -556,10 +611,102 @@ func (m model) appControlsView() string {
 		shuffleStatus = "ON"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  a Add  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)\n  q Quit", shuffleStatus)
+	plexControls := ""
+	if m.plexAuthenticated {
+		plexControls = "\n  1 Servers  2 Libraries  3 Artists  4 Albums"
+	}
+
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  a Add  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)%s\n  q Quit", shuffleStatus, plexControls)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
 	return fmt.Sprintf("%s\n%s", body, controls)
+}
+
+// =====================
+// Playback Control Methods
+// =====================
+
+// togglePlayback toggles between play and pause
+func (m *model) togglePlayback() tea.Cmd {
+	if m.isPlaying {
+		m.sendCommand("playback/pause")
+		m.isPlaying = false
+		m.lastCommand = "Pause"
+	} else {
+		m.sendCommand("playback/play")
+		m.isPlaying = true
+		m.lastCommand = "Play"
+	}
+	return m.pollTimeline()
+}
+
+// nextTrack skips to the next track
+func (m *model) nextTrack() tea.Cmd {
+	m.sendCommand("playback/skipNext")
+	m.lastCommand = "Next"
+	return m.pollTimeline()
+}
+
+// previousTrack goes to the previous track
+func (m *model) previousTrack() tea.Cmd {
+	m.sendCommand("playback/skipPrevious")
+	m.lastCommand = "Previous"
+	return m.pollTimeline()
+}
+
+// adjustVolume changes the volume by the specified delta (range: -100 to +100)
+func (m *model) adjustVolume(delta int) tea.Cmd {
+	newVol := m.volume + delta
+	if newVol < 0 {
+		newVol = 0
+	} else if newVol > 100 {
+		newVol = 100
+	}
+
+	// Use setVolume to handle the actual volume change
+	m.setVolume(newVol)
+
+	// Update the status message
+	m.lastCommand = fmt.Sprintf("Volume %d%%", newVol)
+
+	// Return a command to update the timeline
+	return m.pollTimeline()
+}
+
+// seek seeks the current track by the specified number of seconds
+func (m *model) seek(seconds int) tea.Cmd {
+	// Calculate the new position in milliseconds
+	newPos := m.positionMs + (seconds * 1000)
+
+	// Ensure the position is within bounds
+	if newPos < 0 {
+		newPos = 0
+	} else if m.durationMs > 0 && newPos > m.durationMs {
+		newPos = m.durationMs
+	}
+
+	// Send the seek command with absolute position
+	m.sendCommand(fmt.Sprintf("playback/seekTo?time=%d", newPos))
+	m.lastCommand = fmt.Sprintf("Seek to %s", formatTime(newPos))
+
+	// Update the position immediately for better UX
+	m.positionMs = newPos
+	m.lastUpdate = time.Now()
+
+	return m.pollTimeline()
+}
+
+// toggleShuffle toggles shuffle mode
+func (m *model) toggleShuffle() tea.Cmd {
+	m.shuffle = !m.shuffle
+	if m.shuffle {
+		m.sendCommand("playback/shuffle/on")
+		m.lastCommand = "Shuffle ON"
+	} else {
+		m.sendCommand("playback/shuffle/off")
+		m.lastCommand = "Shuffle OFF"
+	}
+	return nil
 }
 
 // =====================
@@ -703,6 +850,7 @@ func progressBar(pos, dur, width int) string {
 	return bar
 }
 
+// setVolume sets the volume directly to the specified value (0-100)
 func (m *model) setVolume(v int) {
 	if m.selected == "" {
 		return
@@ -720,8 +868,9 @@ func (m *model) triggerPlaybackCmd(fullURL string) tea.Cmd {
 	}
 
 	serverIP := m.selected
+	shuffle := m.shuffle
 	return func() tea.Msg {
-		err := triggerPlayback(serverIP, fullURL)
+		err := SendPlaybackURL(serverIP, fullURL, shuffle)
 		if err != nil {
 			return playbackTriggeredMsg{success: false, err: err}
 		}
