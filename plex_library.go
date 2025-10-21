@@ -148,7 +148,7 @@ func FetchAlbums(serverAddr, libraryID, token string) ([]PlexAlbum, error) {
 
 	// Sort albums alphabetically by title
 	sort.Slice(albums, func(i, j int) bool {
-		return albums[i].Title < albums[j].Title
+		return albums[i].ParentTitle < albums[j].ParentTitle
 	})
 
 	return albums, nil
