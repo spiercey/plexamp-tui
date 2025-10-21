@@ -30,6 +30,13 @@ func NewPlaybackURLBuilder(serverID string) *PlaybackURLBuilder {
 	}
 }
 
+// BuildPlaylistURL builds a URL for playing a playlist
+func (b *PlaybackURLBuilder) BuildPlaylistURL(metadataID string) string {
+	uri := fmt.Sprintf(plexURIPrefix, b.serverID, metadataID)
+	u := fmt.Sprintf("%s/player/playback/createPlayQueue?source=%s&uri=%s&playlistID=%s&type=audio", plexListenBaseURL, url.QueryEscape(b.serverID), url.QueryEscape(uri), metadataID)
+	return u
+}
+
 // BuildPlayQueueURL builds a URL for creating a play queue
 // This is used for playing albums, tracks, etc.
 func (b *PlaybackURLBuilder) BuildPlayQueueURL(metadataID string) string {
@@ -112,5 +119,13 @@ func PlayArtistRadio(serverIP, serverID, metadataID string, shuffle bool) error 
 	stationUUID := uuid.New().String()
 	builder := NewPlaybackURLBuilder(serverID)
 	playbackURL := builder.BuildArtistRadioURL(metadataID, stationUUID)
+	return SendPlaybackURL(serverIP, playbackURL, shuffle)
+}
+
+// PlayPlaylist plays a specific playlist
+// This is a convenience function that builds the URL and sends it
+func PlayPlaylist(serverIP, serverID, metadataID string, shuffle bool) error {
+	builder := NewPlaybackURLBuilder(serverID)
+	playbackURL := builder.BuildPlaylistURL(metadataID)
 	return SendPlaybackURL(serverIP, playbackURL, shuffle)
 }
