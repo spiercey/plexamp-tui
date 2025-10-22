@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -694,12 +695,47 @@ func (m model) View() string {
 
 	// Right side has two stacked panels
 	playbackPanel := border.Width(m.width/2 - 2).Render(m.playbackStatusView())
-	libraryPanel := border.Width(m.width/2 - 2).Render(m.libraryControlsView())
 	controlsPanel := border.Width(m.width/2 - 2).Render(m.appControlsView())
-	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, libraryPanel, controlsPanel)
+	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, controlsPanel)
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightSide)
-	return lipgloss.JoinVertical(lipgloss.Left, title, content)
+
+	// Combine all elements with the footer at the bottom
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinVertical(lipgloss.Left, title, content),
+		"\n"+m.footerView(),
+	)
+}
+
+// footerView renders the application footer
+func (m model) footerView() string {
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
+	footerStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderTop(true).
+		BorderForeground(lipgloss.Color("#00ffff")).
+		Padding(0, 1)
+	footer := ""
+
+	if len(m.config.PlexLibraries) > 0 {
+		footer += fmt.Sprintf("%s: ", header.Render("Library"))
+		for _, library := range m.config.PlexLibraries {
+			if library.Key == m.config.PlexLibraryID {
+				footer += fmt.Sprintf("%s | ", value.Render(library.Title))
+			} else {
+				footer += fmt.Sprintf("%s | ", library.Title)
+			}
+
+		}
+		footer = strings.TrimSuffix(footer, "| ")
+		footer += "\n"
+	}
+
+	footer += fmt.Sprintf("%s: %s | ", header.Render("Server"), value.Render(m.config.PlexServerName))
+	footer += fmt.Sprintf("%s: %s", header.Render("Player"), value.Render(m.config.SelectedPlayerName))
+
+	return footerStyle.Width(m.width - 2).Render(footer)
 }
 
 func (m model) playbackStatusView() string {
