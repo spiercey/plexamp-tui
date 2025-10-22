@@ -880,13 +880,13 @@ func (m *model) cycleLibrary() tea.Cmd {
 			if i == len(m.config.PlexLibraries)-1 {
 				m.config.PlexLibraryID = m.config.PlexLibraries[0].Key
 				m.config.PlexLibraryName = m.config.PlexLibraries[0].Title
-				m.saveServerConfig()
 			} else {
 				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
 				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
-				m.saveServerConfig()
 			}
-			break
+			m.saveServerConfig()
+			// Return a command that will refresh the current panel
+			return m.refreshCurrentPanel()
 		}
 	}
 	return nil

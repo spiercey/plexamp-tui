@@ -4,6 +4,22 @@ import tea "github.com/charmbracelet/bubbletea"
 
 // handleControl processes common playback control key presses
 // Returns the command to execute and a boolean indicating if a control was handled
+// refreshCurrentPanel returns a command that refreshes the current panel based on the panel mode
+func (m *model) refreshCurrentPanel() tea.Cmd {
+	switch m.panelMode {
+	case "plex-artists":
+		return m.fetchArtistsCmd()
+	case "plex-albums":
+		return m.fetchAlbumsCmd()
+	case "plex-playlists":
+		return m.fetchPlaylistsCmd()
+	default:
+		return nil
+	}
+}
+
+// handleControl processes common playback control key presses
+// Returns the command to execute and a boolean indicating if a control was handled
 func (m *model) handleControl(key string) (tea.Cmd, bool) {
 	switch key {
 	case " ", "p": // Space or 'p' for play/pause
@@ -26,6 +42,9 @@ func (m *model) handleControl(key string) (tea.Cmd, bool) {
 
 	case "tab": // Cycle library
 		return m.cycleLibrary(), true
+		
+	case "r": // Refresh current panel
+		return m.refreshCurrentPanel(), true
 
 	default:
 		return nil, false
