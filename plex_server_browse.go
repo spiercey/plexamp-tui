@@ -45,6 +45,10 @@ func (i serverItem) FilterValue() string {
 // fetchServersCmd fetches servers from the Plex server
 func (m *model) fetchServersCmd() tea.Cmd {
 	logDebug("Fetching servers...")
+	// ✅ Reapply sizing
+	footerHeight := 3 // or dynamically measure your footer
+	availableHeight := m.height - footerHeight - 5
+	m.serverList.SetSize(m.width/2-4, availableHeight)
 	if m.config == nil {
 		return func() tea.Msg {
 			return serversFetchedMsg{err: fmt.Errorf("no config available")}

@@ -44,6 +44,10 @@ func (i playerItem) FilterValue() string {
 // fetchPlayersCmd fetches players from the Plex server
 func (m *model) fetchPlayersCmd() tea.Cmd {
 	logDebug("Fetching players...")
+	// ✅ Reapply sizing
+	footerHeight := 3 // or dynamically measure your footer
+	availableHeight := m.height - footerHeight - 5
+	m.playerList.SetSize(m.width/2-4, availableHeight)
 	if m.config == nil {
 		return func() tea.Msg {
 			return playersFetchedMsg{err: fmt.Errorf("no config available")}

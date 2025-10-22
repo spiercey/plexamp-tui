@@ -42,6 +42,10 @@ func (i playlistItem) FilterValue() string {
 // fetchPlaylistsCmd fetches playlists from the Plex server
 func (m *model) fetchPlaylistsCmd() tea.Cmd {
 	logDebug("Fetching playlists...")
+	// ✅ Reapply sizing
+	footerHeight := 3 // or dynamically measure your footer
+	availableHeight := m.height - footerHeight - 5
+	m.playlistList.SetSize(m.width/2-4, availableHeight)
 	if m.config == nil {
 		return func() tea.Msg {
 			return playlistsFetchedMsg{err: fmt.Errorf("no config available")}

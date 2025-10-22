@@ -29,6 +29,10 @@ type artistPlaybackMsg struct {
 // fetchArtistsCmd fetches artists from the Plex server
 func (m *model) fetchArtistsCmd() tea.Cmd {
 	logDebug("Fetching artists...")
+	// ✅ Reapply sizing
+	footerHeight := 3 // or dynamically measure your footer
+	availableHeight := m.height - footerHeight - 5
+	m.artistList.SetSize(m.width/2-4, availableHeight)
 	if m.config == nil {
 		return func() tea.Msg {
 			return artistsFetchedMsg{err: fmt.Errorf("no config available")}
@@ -117,7 +121,7 @@ func (m *model) initArtistBrowse() {
 	// Create a new default delegate with custom styling
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = false // Don't show description
-	
+
 	m.artistList = list.New(items, delegate, 0, 0)
 	m.artistList.Title = "Plex Artists"
 	m.artistList.SetShowFilter(true)
@@ -212,15 +216,15 @@ func (m *model) handleArtistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Preserve the current filter state
 		filterState := m.artistList.FilterState()
 		filterValue := m.artistList.FilterValue()
-		
+
 		// Create a new default delegate with custom styling
 		delegate := list.NewDefaultDelegate()
 		delegate.ShowDescription = false // Don't show description
-		
+
 		// Create new list with existing items
 		m.artistList.SetItems(items)
 		m.artistList.ResetSelected()
-		
+
 		// Restore filter state if there was one
 		if filterState == list.Filtering {
 			m.artistList.ResetFilter()
@@ -263,15 +267,15 @@ type artistItem struct {
 func (i artistItem) Title() string       { return i.title }
 func (i artistItem) Description() string { return "" } // No description needed
 // FilterValue implements list.Item
-func (i artistItem) FilterValue() string { 
+func (i artistItem) FilterValue() string {
 	// Return the title in lowercase for case-insensitive matching
-	return i.title 
+	return i.title
 }
 
 // Custom styles for the list
 var (
-	titleStyle = lipgloss.NewStyle().MarginLeft(2)
-	itemStyle = lipgloss.NewStyle().PaddingLeft(4)
-	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Margin(1, 0, 0, 2)
+	titleStyle      = lipgloss.NewStyle().MarginLeft(2)
+	itemStyle       = lipgloss.NewStyle().PaddingLeft(4)
+	helpStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Margin(1, 0, 0, 2)
 	paginationStyle = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
 )

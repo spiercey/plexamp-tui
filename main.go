@@ -349,13 +349,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// Set list sizes for 2-column layout (left panel takes half width)
-		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.artistList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.albumList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.playlistList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.serverList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.playerList.SetSize(msg.Width/2-4, msg.Height-4)
+
+		// Reserve a few lines for the footer (and maybe the title)
+		footerHeight := 3 // adjust if your footer grows taller
+		titleHeight := 3
+		availableHeight := msg.Height - footerHeight - titleHeight - 2
+
+		m.playbackList.SetSize(msg.Width/2-4, availableHeight)
+		m.artistList.SetSize(msg.Width/2-4, availableHeight)
+		m.albumList.SetSize(msg.Width/2-4, availableHeight)
+		m.playlistList.SetSize(msg.Width/2-4, availableHeight)
+		m.serverList.SetSize(msg.Width/2-4, availableHeight)
+		m.playerList.SetSize(msg.Width/2-4, availableHeight)
+
 		return m, nil
 
 	case tea.KeyMsg:
@@ -711,31 +717,75 @@ func (m model) View() string {
 func (m model) footerView() string {
 	header := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
 	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
+	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#8888ff"))
 	footerStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderTop(true).
 		BorderForeground(lipgloss.Color("#00ffff")).
 		Padding(0, 1)
-	footer := ""
 
+	// --- Left side (your existing info)
+	left := ""
 	if len(m.config.PlexLibraries) > 0 {
-		footer += fmt.Sprintf("%s: ", header.Render("Library"))
+		left += fmt.Sprintf("%s %s: ", header.Render("Library"), info.Render("(Tab)"))
 		for _, library := range m.config.PlexLibraries {
 			if library.Key == m.config.PlexLibraryID {
-				footer += fmt.Sprintf("%s | ", value.Render(library.Title))
+				left += fmt.Sprintf("%s | ", value.Render(library.Title))
 			} else {
-				footer += fmt.Sprintf("%s | ", library.Title)
+				left += fmt.Sprintf("%s | ", library.Title)
 			}
-
 		}
-		footer = strings.TrimSuffix(footer, "| ")
-		footer += "\n"
+		left = strings.TrimSuffix(left, "| ")
+		left += "\n"
 	}
 
-	footer += fmt.Sprintf("%s: %s | ", header.Render("Server"), value.Render(m.config.PlexServerName))
-	footer += fmt.Sprintf("%s: %s", header.Render("Player"), value.Render(m.config.SelectedPlayerName))
+	left += fmt.Sprintf("%s %s: %s | ", header.Render("Server"), info.Render("(6)"), value.Render(m.config.PlexServerName))
+	left += fmt.Sprintf("%s %s: %s", header.Render("Player"), info.Render("(7)"), value.Render(m.config.SelectedPlayerName))
 
-	return footerStyle.Width(m.width - 2).Render(footer)
+	// --- Right side (new)
+	// Example: replace with whatever info you want (track, status, etc.)
+	var right string
+	if m.plexAuthenticated {
+		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✓"))
+	} else {
+		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✗"))
+	}
+
+	right += fmt.Sprintf("\n%s: %s ", header.Render("Last Command"), value.Render(m.lastCommand))
+
+	// --- Combine left and right
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+
+	var combinedLines []string
+	maxLines := max(len(leftLines), len(rightLines))
+
+	for i := 0; i < maxLines; i++ {
+		var l, r string
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+
+		padding := m.width - lipgloss.Width(l) - lipgloss.Width(r) - 4 // adjust for borders/padding
+		if padding < 1 {
+			padding = 1
+		}
+		line := l + strings.Repeat(" ", padding) + r
+		combinedLines = append(combinedLines, line)
+	}
+
+	return footerStyle.Width(m.width - 2).Render(strings.Join(combinedLines, "\n"))
+}
+
+// helper
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m model) playbackStatusView() string {
