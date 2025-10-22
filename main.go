@@ -694,8 +694,9 @@ func (m model) View() string {
 
 	// Right side has two stacked panels
 	playbackPanel := border.Width(m.width/2 - 2).Render(m.playbackStatusView())
+	libraryPanel := border.Width(m.width/2 - 2).Render(m.libraryControlsView())
 	controlsPanel := border.Width(m.width/2 - 2).Render(m.appControlsView())
-	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, controlsPanel)
+	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, libraryPanel, controlsPanel)
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightSide)
 	return lipgloss.JoinVertical(lipgloss.Left, title, content)
