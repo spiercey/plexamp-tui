@@ -252,7 +252,7 @@ func main() {
 		}
 	}
 	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
-	playbackList.Title = "Select Playback"
+	playbackList.Title = "Favorites"
 
 	m := model{
 		playbackList:      playbackList,
@@ -488,56 +488,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-
-		case "3":
-			// Open artist browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initArtistBrowse()
-				return m, m.fetchArtistsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "4":
-			// Open album browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initAlbumBrowse()
-				return m, m.fetchAlbumsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "5":
-			// Open playlist browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initPlaylistBrowse()
-				return m, m.fetchPlaylistsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "6":
-			// Open server browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initServerBrowse()
-				return m, m.fetchServersCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "7":
-			// Open player browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initPlayerBrowse()
-				return m, m.fetchPlayersCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
 
 		default:
 			// Try the common controls

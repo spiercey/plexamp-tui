@@ -42,11 +42,76 @@ func (m *model) handleControl(key string) (tea.Cmd, bool) {
 
 	case "tab": // Cycle library
 		return m.cycleLibrary(), true
-		
+
 	case "r": // Refresh current panel
 		return m.refreshCurrentPanel(), true
+
+	case "1": // Open artist browse
+		return m.openArtistBrowser()
+
+	case "2": // Open album browse
+		return m.openAlbumBrowser()
+
+	case "3": // Open playlist browse
+		return m.openPlaylistBrowser()
+
+	case "6": // Open server browse
+		return m.openServerBrowser()
+
+	case "7": // Open player browse
+		return m.openPlayerBrowser()
 
 	default:
 		return nil, false
 	}
+}
+
+func (m *model) openArtistBrowser() (tea.Cmd, bool) {
+	if m.plexAuthenticated && m.config != nil {
+		m.initArtistBrowse()
+		return m.fetchArtistsCmd(), true
+	} else {
+		m.status = "Plex authentication required (run with --auth)"
+	}
+	return nil, false
+}
+
+func (m *model) openAlbumBrowser() (tea.Cmd, bool) {
+	if m.plexAuthenticated && m.config != nil {
+		m.initAlbumBrowse()
+		return m.fetchAlbumsCmd(), true
+	} else {
+		m.status = "Plex authentication required (run with --auth)"
+	}
+	return nil, false
+}
+
+func (m *model) openPlaylistBrowser() (tea.Cmd, bool) {
+	if m.plexAuthenticated && m.config != nil {
+		m.initPlaylistBrowse()
+		return m.fetchPlaylistsCmd(), true
+	} else {
+		m.status = "Plex authentication required (run with --auth)"
+	}
+	return nil, false
+}
+
+func (m *model) openServerBrowser() (tea.Cmd, bool) {
+	if m.plexAuthenticated && m.config != nil {
+		m.initServerBrowse()
+		return m.fetchServersCmd(), true
+	} else {
+		m.status = "Plex authentication required (run with --auth)"
+	}
+	return nil, false
+}
+
+func (m *model) openPlayerBrowser() (tea.Cmd, bool) {
+	if m.plexAuthenticated && m.config != nil {
+		m.initPlayerBrowse()
+		return m.fetchPlayersCmd(), true
+	} else {
+		m.status = "Plex authentication required (run with --auth)"
+	}
+	return nil, false
 }
