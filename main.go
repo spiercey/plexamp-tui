@@ -871,6 +871,27 @@ func (m *model) toggleShuffle() tea.Cmd {
 	return nil
 }
 
+// will use the config to cycle through the library options, it will check the current selected library and increment to the next one, if it is the last one it will go back to the first one
+func (m *model) cycleLibrary() tea.Cmd {
+	currentLibraryKey := m.config.PlexLibraryID
+
+	for i := range m.config.PlexLibraries {
+		if m.config.PlexLibraries[i].Key == currentLibraryKey {
+			if i == len(m.config.PlexLibraries)-1 {
+				m.config.PlexLibraryID = m.config.PlexLibraries[0].Key
+				m.config.PlexLibraryName = m.config.PlexLibraries[0].Title
+				m.saveServerConfig()
+			} else {
+				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
+				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
+				m.saveServerConfig()
+			}
+			break
+		}
+	}
+	return nil
+}
+
 // =====================
 // Plexamp control logic
 // =====================
