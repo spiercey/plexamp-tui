@@ -68,17 +68,17 @@ func saveDefaultConfig(path string) error {
 	os.MkdirAll(filepath.Dir(path), 0755)
 
 	defaultCfg := Config{
-		ServerID:           "YOUR_SERVER_ID_HERE",
+		ServerID:           "SELECT_SERVER",
 		PlexServerAddr:     "127.0.0.1:32400",
-		PlexServerName:     "YOUR_SERVER_NAME_HERE",
+		PlexServerName:     "SELECT_SERVER",
 		PlexLibraryID:      "15",
 		SelectedPlayer:     "127.0.0.1",
-		SelectedPlayerName: "YOUR_PLAYER_NAME_HERE",
-		PlexLibraryName:    "YOUR_LIBRARY_NAME_HERE",
+		SelectedPlayerName: "SELECT_PLAYER",
+		PlexLibraryName:    "SELECT_LIBRARY",
 		PlexLibraries: []PlexLibrary{
 			{
 				Key:   "15",
-				Title: "YOUR_LIBRARY_NAME_HERE",
+				Title: "SELECT_LIBRARY",
 				Type:  "artist",
 			},
 		},
@@ -632,17 +632,18 @@ func (m model) View() string {
 
 	// Build left panel content
 	var leftPanelContent string
-	if m.panelMode == "playback" {
+	switch m.panelMode {
+	case "playback":
 		leftPanelContent = m.playbackList.View()
-	} else if m.panelMode == "plex-artists" {
+	case "plex-artists":
 		leftPanelContent = m.artistList.View()
-	} else if m.panelMode == "plex-albums" {
+	case "plex-albums":
 		leftPanelContent = m.albumList.View()
-	} else if m.panelMode == "plex-playlists" {
+	case "plex-playlists":
 		leftPanelContent = m.playlistList.View()
-	} else if m.panelMode == "plex-servers" {
+	case "plex-servers":
 		leftPanelContent = m.serverList.View()
-	} else if m.panelMode == "plex-players" {
+	case "plex-players":
 		leftPanelContent = m.playerList.View()
 	}
 
@@ -674,8 +675,15 @@ func (m model) footerView() string {
 		BorderForeground(lipgloss.Color("#00ffff")).
 		Padding(0, 1)
 
+	var shuffleValue string
+	if m.shuffle {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
+	} else {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
+	}
 	// --- Left side (your existing info)
 	left := ""
+	left += fmt.Sprintf("%s %s: %s \n", header.Render("Shuffle"), info.Render("(h)"), shuffleValue)
 	if len(m.config.PlexLibraries) > 0 {
 		left += fmt.Sprintf("%s %s: ", header.Render("Library"), info.Render("(Tab)"))
 		for _, library := range m.config.PlexLibraries {
@@ -769,55 +777,22 @@ func (m model) playbackStatusView() string {
 }
 
 func (m model) appControlsView() string {
-	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
-	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
-
-	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("App Info") + "\n\n"
+	body := ""
 
 	if m.usingDefaultCfg {
 		body += lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(
 			"⚠️ Using default config\n\n")
 	}
 
-	// Shuffle status with color
-	var shuffleValue string
-	if m.shuffle {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
-	} else {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
-	}
-
-	// Plex authentication status with color
-	var authValue string
-	if m.plexAuthenticated {
-		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("✓ Authenticated")
-	} else {
-		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("✗ Not Authenticated")
-	}
-
-	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
-		info.Render("Server"), value.Render(m.config.PlexServerName),
-		info.Render("Player"), value.Render(m.config.SelectedPlayerName),
-		info.Render("Plex"), authValue,
-		info.Render("Shuffle"), shuffleValue,
-		info.Render("Last Command"), value.Render(m.lastCommand),
-	)
-
-	shuffleStatus := "OFF"
-	if m.shuffle {
-		shuffleStatus = "ON"
-	}
-
 	plexControls := ""
 	if m.plexAuthenticated {
-		plexControls = "\n  1 Servers  2 Libraries  3 Artists  4 Albums"
+		plexControls = "\n  1 Artists  2 Albums  3 Playlists"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  a Add  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)%s\n  q Quit", shuffleStatus, plexControls)
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  [p / space] Play/Pause\n  n Next\n  b Previous\n  +/- Volume %s\n  q Quit", plexControls)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
-	return fmt.Sprintf("%s\n%s", body, controls)
+	return fmt.Sprintf("%s%s", body, controls)
 }
 
 // =====================

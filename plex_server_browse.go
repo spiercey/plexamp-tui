@@ -83,7 +83,6 @@ func (m *model) initServerBrowse() {
 	m.serverList = list.New(items, delegate, 0, 0)
 	m.serverList.Title = "Plex Servers"
 	m.serverList.SetShowFilter(true)
-	m.serverList.SetShowStatusBar(false)
 	m.serverList.SetFilteringEnabled(true)
 	m.serverList.Styles.Title = titleStyle
 	m.serverList.Styles.PaginationStyle = paginationStyle

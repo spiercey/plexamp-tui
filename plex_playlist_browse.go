@@ -82,7 +82,6 @@ func (m *model) initPlaylistBrowse() {
 	m.playlistList = list.New(items, delegate, 0, 0)
 	m.playlistList.Title = "Plex Playlists"
 	m.playlistList.SetShowFilter(true)
-	m.playlistList.SetShowStatusBar(false)
 	m.playlistList.SetFilteringEnabled(true)
 	m.playlistList.Styles.Title = titleStyle
 	m.playlistList.Styles.PaginationStyle = paginationStyle

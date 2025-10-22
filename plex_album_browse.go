@@ -77,7 +77,6 @@ func (m *model) initAlbumBrowse() {
 	m.albumList = list.New(items, delegate, 0, 0)
 	m.albumList.Title = "Plex Albums"
 	m.albumList.SetShowFilter(true)
-	m.albumList.SetShowStatusBar(false)
 	m.albumList.SetFilteringEnabled(true)
 	m.albumList.Styles.Title = titleStyle
 	m.albumList.Styles.PaginationStyle = paginationStyle

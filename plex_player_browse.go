@@ -82,7 +82,6 @@ func (m *model) initPlayerBrowse() {
 	m.playerList = list.New(items, delegate, 0, 0)
 	m.playerList.Title = "Plex Players"
 	m.playerList.SetShowFilter(true)
-	m.playerList.SetShowStatusBar(false)
 	m.playerList.SetFilteringEnabled(true)
 	m.playerList.Styles.Title = titleStyle
 	m.playerList.Styles.PaginationStyle = paginationStyle
