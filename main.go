@@ -23,10 +23,14 @@ import (
 // =====================
 
 type Config struct {
-	Instances      []string `json:"instances"`
-	ServerID       string   `json:"server_id"`        // Plex server ID for building playback URLs
-	PlexServerAddr string   `json:"plex_server_addr"` // Plex server address for API calls (e.g., "jakku.lan:32400")
-	PlexLibraryID  string   `json:"plex_library_id"`  // Music library ID for browsing
+	ServerID           string        `json:"server_id"`            // Plex server ID for building playback URLs
+	PlexServerAddr     string        `json:"plex_server_addr"`     // Plex server address for API calls (e.g., "jakku.lan:32400")
+	PlexServerName     string        `json:"plex_server_name"`     // Plex server name for displayj
+	PlexLibraryID      string        `json:"plex_library_id"`      // Music library ID for browsing
+	SelectedPlayer     string        `json:"selected_player"`      // Selected player for playback
+	SelectedPlayerName string        `json:"selected_player_name"` // Selected player name for display
+	PlexLibraryName    string        `json:"plex_library_name"`    // Music library name for display
+	PlexLibraries      []PlexLibrary `json:"plex_libraries"`       // List of Plex libraries
 }
 
 func configPath() (string, error) {
@@ -55,10 +59,6 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if len(cfg.Instances) == 0 {
-		return nil, fmt.Errorf("no instances defined in config file")
-	}
-
 	logDebug(fmt.Sprintf("Loaded config: %v", cfg))
 	return &cfg, nil
 }
@@ -67,12 +67,20 @@ func saveDefaultConfig(path string) error {
 	os.MkdirAll(filepath.Dir(path), 0755)
 
 	defaultCfg := Config{
-		Instances: []string{
-			"127.0.0.1",
+		ServerID:           "YOUR_SERVER_ID_HERE",
+		PlexServerAddr:     "127.0.0.1:32400",
+		PlexServerName:     "YOUR_SERVER_NAME_HERE",
+		PlexLibraryID:      "15",
+		SelectedPlayer:     "127.0.0.1",
+		SelectedPlayerName: "YOUR_PLAYER_NAME_HERE",
+		PlexLibraryName:    "YOUR_LIBRARY_NAME_HERE",
+		PlexLibraries: []PlexLibrary{
+			{
+				Key:   "15",
+				Title: "YOUR_LIBRARY_NAME_HERE",
+				Type:  "artist",
+			},
 		},
-		ServerID:       "YOUR_SERVER_ID_HERE",
-		PlexServerAddr: "hostname:32400",
-		PlexLibraryID:  "15",
 	}
 
 	data, _ := json.MarshalIndent(defaultCfg, "", "  ")
@@ -90,11 +98,12 @@ func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return string(i) }
 
 type model struct {
-	list              list.Model
 	playbackList      list.Model
 	artistList        list.Model // Plex artist browse list
 	albumList         list.Model // Plex album browse list
 	playlistList      list.Model // Plex playlist browse list
+	serverList        list.Model // Plex server browse list
+	playerList        list.Model // Plex player browse list
 	selected          string
 	status            string
 	width             int
@@ -223,17 +232,6 @@ func main() {
 		}
 	}
 
-	var items []list.Item
-	for _, instance := range cfg.Instances {
-		items = append(items, item(instance))
-	}
-
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Select Instance"
-	if len(items) > 0 {
-		l.Select(0)
-	}
-
 	// Load playback config
 	playbackCfgPath, _ := playbackConfigPath()
 	playbackCfg, err := loadPlaybackConfig(playbackCfgPath)
@@ -256,13 +254,14 @@ func main() {
 	playbackList.Title = "Select Playback"
 
 	m := model{
-		list:              l,
 		playbackList:      playbackList,
 		artistList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		albumList:         list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		playlistList:      list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
-		selected:          string(items[0].(item)),
-		usingDefaultCfg:   usingDefault || items[0].(item) == "127.0.0.1",
+		serverList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		playerList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		selected:          cfg.SelectedPlayer,
+		usingDefaultCfg:   usingDefault,
 		playbackConfig:    playbackCfg,
 		config:            cfg,
 		panelMode:         "playback",
@@ -274,6 +273,13 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error:", err)
 	}
+
+	serverInfo, err := GetPlexServerInformation()
+	if err != nil {
+		logDebug(fmt.Sprintf("Error getting server information: %v", err))
+		os.Exit(1)
+	}
+	logDebug(fmt.Sprintf("Server information: %v", serverInfo))
 }
 
 // =====================
@@ -292,14 +298,63 @@ func tick() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case playerSelectMsg:
+		if msg.err != nil {
+			m.status = "Error selecting player: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.success {
+			m.config.SelectedPlayer = msg.player.address
+			m.config.SelectedPlayerName = msg.player.title
+			m.selected = msg.player.address
+			m.saveServerConfig()
+			m.lastCommand = "Player Selected"
+			m.status = ""
+			m.panelMode = "playback" // Return to playback view after selection
+		}
+		return m, nil
+
+	case serverSelectMsg:
+		if msg.err != nil {
+			m.status = "Error selecting server: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.success {
+			m.config.ServerID = msg.server.clientIdentifier
+			m.config.PlexServerAddr = msg.server.address + ":" + msg.server.port
+			m.config.PlexServerName = msg.server.title
+			m.config.PlexLibraries = msg.libraries
+
+			found := false
+			//check if new library list has our configured library
+			for _, lib := range msg.libraries {
+				if lib.Title == m.config.PlexLibraryName {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				m.config.PlexLibraryName = msg.libraries[0].Title
+				m.config.PlexLibraryID = msg.libraries[0].Key
+			}
+
+			m.saveServerConfig()
+			m.lastCommand = "Server Selected"
+			m.status = ""
+			m.panelMode = "playback" // Return to playback view after selection
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		// Set list sizes for 2-column layout (left panel takes half width)
-		m.list.SetSize(msg.Width/2-4, msg.Height-4)
 		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
 		m.artistList.SetSize(msg.Width/2-4, msg.Height-4)
 		m.albumList.SetSize(msg.Width/2-4, msg.Height-4)
 		m.playlistList.SetSize(msg.Width/2-4, msg.Height-4)
+		m.serverList.SetSize(msg.Width/2-4, msg.Height-4)
+		m.playerList.SetSize(msg.Width/2-4, msg.Height-4)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -353,6 +408,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Handle server browse mode
+		if m.panelMode == "plex-servers" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handleServerBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handleServerBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
+		// Handle player browse mode
+		if m.panelMode == "plex-players" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handlePlayerBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handlePlayerBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
 		// Handle playback selection (when in playback mode)
 		if m.panelMode == "playback" {
 			// Check if we're in filtering mode for the playback list
@@ -387,27 +472,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-				// Let the list handle single character input for filtering
-				// case " ", "/":
-				// 	var cmd tea.Cmd
-				// 	m.playbackList, cmd = m.playbackList.Update(msg)
-				// 	return m, cmd
-
-				// default:
-				// 	key := msg.String()
-				// 	if len(key) == 1 {
-				// 		var cmd tea.Cmd
-				// 		m.playbackList, cmd = m.playbackList.Update(msg)
-				// 		return m, cmd
-				// 	}
 			}
-		}
-
-		// Check if we're in filtering mode for the servers list
-		if m.panelMode == "servers" && m.list.FilterState() == list.Filtering {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			return m, cmd
 		}
 
 		// Main app key handlers (only processed when popup is NOT open)
@@ -416,50 +481,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-
-		case "a":
-			// Add new server (only in servers mode)
-			if m.panelMode == "servers" {
-				m.initEditMode("server", -1)
-				return m, nil
-			}
-
-		case "e":
-			// Edit selected server (only in servers mode)
-			if m.panelMode == "servers" {
-				index := m.list.Index()
-				m.initEditMode("server", index)
-				return m, nil
-			}
-
-		case "enter":
-			selected, ok := m.list.SelectedItem().(item)
-			if ok {
-				m.selected = string(selected)
-				m.status = fmt.Sprintf("Selected: %s", m.selected)
-				// Reset playback info when switching
-				m.currentTrack = ""
-				m.isPlaying = false
-				m.volume = 0
-				m.durationMs = 0
-				m.positionMs = 0
-				m.lastUpdate = time.Time{}
-				m.timelineRequestID++
-				return m, m.pollTimeline()
-			}
-
-		case "tab":
-			// Toggle between servers and playback panels
-			if m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
-				if m.panelMode == "servers" {
-					logDebug(fmt.Sprintf("Switching to playback panel with %d items", len(m.playbackConfig.Items)))
-					m.panelMode = "playback"
-				} else {
-					logDebug("Switching to servers panel")
-					m.panelMode = "servers"
-				}
-			}
-			return m, nil
 
 		case "3":
 			// Open artist browse (if authenticated)
@@ -486,6 +507,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.plexAuthenticated && m.config != nil {
 				m.initPlaylistBrowse()
 				return m, m.fetchPlaylistsCmd()
+			} else {
+				m.status = "Plex authentication required (run with --auth)"
+			}
+			return m, nil
+
+		case "6":
+			// Open server browse (if authenticated)
+			if m.plexAuthenticated && m.config != nil {
+				m.initServerBrowse()
+				return m, m.fetchServersCmd()
+			} else {
+				m.status = "Plex authentication required (run with --auth)"
+			}
+			return m, nil
+
+		case "7":
+			// Open player browse (if authenticated)
+			if m.plexAuthenticated && m.config != nil {
+				m.initPlayerBrowse()
+				return m, m.fetchPlayersCmd()
 			} else {
 				m.status = "Plex authentication required (run with --auth)"
 			}
@@ -573,6 +614,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case serversFetchedMsg:
+		// Forward the message to the server browse handler
+		if m.panelMode == "plex-servers" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handleServerBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
+
+	case playersFetchedMsg:
+		// Forward the message to the player browse handler
+		if m.panelMode == "plex-players" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handlePlayerBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Update the appropriate list based on panel mode
@@ -585,8 +654,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.albumList, cmd = m.albumList.Update(msg)
 	} else if m.panelMode == "plex-playlists" {
 		m.playlistList, cmd = m.playlistList.Update(msg)
-	} else {
-		m.list, cmd = m.list.Update(msg)
+	} else if m.panelMode == "plex-servers" {
+		m.serverList, cmd = m.serverList.Update(msg)
+	} else if m.panelMode == "plex-players" {
+		m.playerList, cmd = m.playerList.Update(msg)
 	}
 	return m, cmd
 }
@@ -612,8 +683,10 @@ func (m model) View() string {
 		leftPanelContent = m.albumList.View()
 	} else if m.panelMode == "plex-playlists" {
 		leftPanelContent = m.playlistList.View()
-	} else {
-		leftPanelContent = m.list.View()
+	} else if m.panelMode == "plex-servers" {
+		leftPanelContent = m.serverList.View()
+	} else if m.panelMode == "plex-players" {
+		leftPanelContent = m.playerList.View()
 	}
 
 	// Left panel
@@ -662,11 +735,6 @@ func (m model) appControlsView() string {
 	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
 	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
 
-	selected := "None"
-	if m.selected != "" {
-		selected = m.selected
-	}
-
 	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("App Info") + "\n\n"
 
 	if m.usingDefaultCfg {
@@ -691,8 +759,9 @@ func (m model) appControlsView() string {
 	}
 
 	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
-		info.Render("Server"), value.Render(selected),
+		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
+		info.Render("Server"), value.Render(m.config.PlexServerName),
+		info.Render("Player"), value.Render(m.config.SelectedPlayerName),
 		info.Render("Plex"), authValue,
 		info.Render("Shuffle"), shuffleValue,
 		info.Render("Last Command"), value.Render(m.lastCommand),
