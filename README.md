@@ -22,7 +22,7 @@ It allows you to select a Plexamp server, view the currently playing track, play
 1. Clone this repository:
 
 ```bash
-git clone https://github.com/<your-username>/plexamp-tui.git
+git clone https://github.com/spiercey/plexamp-tui.git
 cd plexamp-tui
 ```
 
