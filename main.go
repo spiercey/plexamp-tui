@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -23,10 +24,14 @@ import (
 // =====================
 
 type Config struct {
-	Instances      []string `json:"instances"`
-	ServerID       string   `json:"server_id"`        // Plex server ID for building playback URLs
-	PlexServerAddr string   `json:"plex_server_addr"` // Plex server address for API calls (e.g., "jakku.lan:32400")
-	PlexLibraryID  string   `json:"plex_library_id"`  // Music library ID for browsing
+	ServerID           string        `json:"server_id"`            // Plex server ID for building playback URLs
+	PlexServerAddr     string        `json:"plex_server_addr"`     // Plex server address for API calls (e.g., "jakku.lan:32400")
+	PlexServerName     string        `json:"plex_server_name"`     // Plex server name for displayj
+	PlexLibraryID      string        `json:"plex_library_id"`      // Music library ID for browsing
+	SelectedPlayer     string        `json:"selected_player"`      // Selected player for playback
+	SelectedPlayerName string        `json:"selected_player_name"` // Selected player name for display
+	PlexLibraryName    string        `json:"plex_library_name"`    // Music library name for display
+	PlexLibraries      []PlexLibrary `json:"plex_libraries"`       // List of Plex libraries
 }
 
 func configPath() (string, error) {
@@ -55,10 +60,6 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if len(cfg.Instances) == 0 {
-		return nil, fmt.Errorf("no instances defined in config file")
-	}
-
 	logDebug(fmt.Sprintf("Loaded config: %v", cfg))
 	return &cfg, nil
 }
@@ -67,12 +68,20 @@ func saveDefaultConfig(path string) error {
 	os.MkdirAll(filepath.Dir(path), 0755)
 
 	defaultCfg := Config{
-		Instances: []string{
-			"127.0.0.1",
+		ServerID:           "SELECT_SERVER",
+		PlexServerAddr:     "127.0.0.1:32400",
+		PlexServerName:     "SELECT_SERVER",
+		PlexLibraryID:      "15",
+		SelectedPlayer:     "127.0.0.1",
+		SelectedPlayerName: "SELECT_PLAYER",
+		PlexLibraryName:    "SELECT_LIBRARY",
+		PlexLibraries: []PlexLibrary{
+			{
+				Key:   "15",
+				Title: "SELECT_LIBRARY",
+				Type:  "artist",
+			},
 		},
-		ServerID:       "YOUR_SERVER_ID_HERE",
-		PlexServerAddr: "hostname:32400",
-		PlexLibraryID:  "15",
 	}
 
 	data, _ := json.MarshalIndent(defaultCfg, "", "  ")
@@ -90,11 +99,12 @@ func (i item) Description() string { return "" }
 func (i item) FilterValue() string { return string(i) }
 
 type model struct {
-	list              list.Model
 	playbackList      list.Model
 	artistList        list.Model // Plex artist browse list
 	albumList         list.Model // Plex album browse list
 	playlistList      list.Model // Plex playlist browse list
+	serverList        list.Model // Plex server browse list
+	playerList        list.Model // Plex player browse list
 	selected          string
 	status            string
 	width             int
@@ -223,17 +233,6 @@ func main() {
 		}
 	}
 
-	var items []list.Item
-	for _, instance := range cfg.Instances {
-		items = append(items, item(instance))
-	}
-
-	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	l.Title = "Select Instance"
-	if len(items) > 0 {
-		l.Select(0)
-	}
-
 	// Load playback config
 	playbackCfgPath, _ := playbackConfigPath()
 	playbackCfg, err := loadPlaybackConfig(playbackCfgPath)
@@ -253,16 +252,17 @@ func main() {
 		}
 	}
 	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
-	playbackList.Title = "Select Playback"
+	playbackList.Title = "Favorites"
 
 	m := model{
-		list:              l,
 		playbackList:      playbackList,
 		artistList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		albumList:         list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		playlistList:      list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
-		selected:          string(items[0].(item)),
-		usingDefaultCfg:   usingDefault || items[0].(item) == "127.0.0.1",
+		serverList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		playerList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		selected:          cfg.SelectedPlayer,
+		usingDefaultCfg:   usingDefault,
 		playbackConfig:    playbackCfg,
 		config:            cfg,
 		panelMode:         "playback",
@@ -274,6 +274,13 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error:", err)
 	}
+
+	serverInfo, err := GetPlexServerInformation()
+	if err != nil {
+		logDebug(fmt.Sprintf("Error getting server information: %v", err))
+		os.Exit(1)
+	}
+	logDebug(fmt.Sprintf("Server information: %v", serverInfo))
 }
 
 // =====================
@@ -292,14 +299,69 @@ func tick() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case playerSelectMsg:
+		if msg.err != nil {
+			m.status = "Error selecting player: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.success {
+			m.config.SelectedPlayer = msg.player.address
+			m.config.SelectedPlayerName = msg.player.title
+			m.selected = msg.player.address
+			m.saveServerConfig()
+			m.lastCommand = "Player Selected"
+			m.status = ""
+			m.panelMode = "playback" // Return to playback view after selection
+		}
+		return m, nil
+
+	case serverSelectMsg:
+		if msg.err != nil {
+			m.status = "Error selecting server: " + msg.err.Error()
+			return m, nil
+		}
+		if msg.success {
+			m.config.ServerID = msg.server.clientIdentifier
+			m.config.PlexServerAddr = msg.server.address + ":" + msg.server.port
+			m.config.PlexServerName = msg.server.title
+			m.config.PlexLibraries = msg.libraries
+
+			found := false
+			//check if new library list has our configured library
+			for _, lib := range msg.libraries {
+				if lib.Title == m.config.PlexLibraryName {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				m.config.PlexLibraryName = msg.libraries[0].Title
+				m.config.PlexLibraryID = msg.libraries[0].Key
+			}
+
+			m.saveServerConfig()
+			m.lastCommand = "Server Selected"
+			m.status = ""
+			m.panelMode = "playback" // Return to playback view after selection
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		// Set list sizes for 2-column layout (left panel takes half width)
-		m.list.SetSize(msg.Width/2-4, msg.Height-4)
-		m.playbackList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.artistList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.albumList.SetSize(msg.Width/2-4, msg.Height-4)
-		m.playlistList.SetSize(msg.Width/2-4, msg.Height-4)
+
+		// Reserve a few lines for the footer (and maybe the title)
+		footerHeight := 3 // adjust if your footer grows taller
+		titleHeight := 3
+		availableHeight := msg.Height - footerHeight - titleHeight - 2
+
+		m.playbackList.SetSize(msg.Width/2-4, availableHeight)
+		m.artistList.SetSize(msg.Width/2-4, availableHeight)
+		m.albumList.SetSize(msg.Width/2-4, availableHeight)
+		m.playlistList.SetSize(msg.Width/2-4, availableHeight)
+		m.serverList.SetSize(msg.Width/2-4, availableHeight)
+		m.playerList.SetSize(msg.Width/2-4, availableHeight)
+
 		return m, nil
 
 	case tea.KeyMsg:
@@ -353,6 +415,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		// Handle server browse mode
+		if m.panelMode == "plex-servers" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handleServerBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handleServerBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
+		// Handle player browse mode
+		if m.panelMode == "plex-players" {
+			// Create a pointer to the current model
+			modelPtr := &m
+			// Call handlePlayerBrowseUpdate which will modify the model directly
+			updatedModel, cmd := modelPtr.handlePlayerBrowseUpdate(msg)
+			// The updated model might be a different instance, so we need to update our local copy
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+
 		// Handle playback selection (when in playback mode)
 		if m.panelMode == "playback" {
 			// Check if we're in filtering mode for the playback list
@@ -387,27 +479,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-				// Let the list handle single character input for filtering
-				// case " ", "/":
-				// 	var cmd tea.Cmd
-				// 	m.playbackList, cmd = m.playbackList.Update(msg)
-				// 	return m, cmd
-
-				// default:
-				// 	key := msg.String()
-				// 	if len(key) == 1 {
-				// 		var cmd tea.Cmd
-				// 		m.playbackList, cmd = m.playbackList.Update(msg)
-				// 		return m, cmd
-				// 	}
 			}
-		}
-
-		// Check if we're in filtering mode for the servers list
-		if m.panelMode == "servers" && m.list.FilterState() == list.Filtering {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			return m, cmd
 		}
 
 		// Main app key handlers (only processed when popup is NOT open)
@@ -416,80 +488,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-
-		case "a":
-			// Add new server (only in servers mode)
-			if m.panelMode == "servers" {
-				m.initEditMode("server", -1)
-				return m, nil
-			}
-
-		case "e":
-			// Edit selected server (only in servers mode)
-			if m.panelMode == "servers" {
-				index := m.list.Index()
-				m.initEditMode("server", index)
-				return m, nil
-			}
-
-		case "enter":
-			selected, ok := m.list.SelectedItem().(item)
-			if ok {
-				m.selected = string(selected)
-				m.status = fmt.Sprintf("Selected: %s", m.selected)
-				// Reset playback info when switching
-				m.currentTrack = ""
-				m.isPlaying = false
-				m.volume = 0
-				m.durationMs = 0
-				m.positionMs = 0
-				m.lastUpdate = time.Time{}
-				m.timelineRequestID++
-				return m, m.pollTimeline()
-			}
-
-		case "tab":
-			// Toggle between servers and playback panels
-			if m.playbackConfig != nil && len(m.playbackConfig.Items) > 0 {
-				if m.panelMode == "servers" {
-					logDebug(fmt.Sprintf("Switching to playback panel with %d items", len(m.playbackConfig.Items)))
-					m.panelMode = "playback"
-				} else {
-					logDebug("Switching to servers panel")
-					m.panelMode = "servers"
-				}
-			}
-			return m, nil
-
-		case "3":
-			// Open artist browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initArtistBrowse()
-				return m, m.fetchArtistsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "4":
-			// Open album browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initAlbumBrowse()
-				return m, m.fetchAlbumsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
-
-		case "5":
-			// Open playlist browse (if authenticated)
-			if m.plexAuthenticated && m.config != nil {
-				m.initPlaylistBrowse()
-				return m, m.fetchPlaylistsCmd()
-			} else {
-				m.status = "Plex authentication required (run with --auth)"
-			}
-			return m, nil
 
 		default:
 			// Try the common controls
@@ -573,6 +571,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case serversFetchedMsg:
+		// Forward the message to the server browse handler
+		if m.panelMode == "plex-servers" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handleServerBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
+
+	case playersFetchedMsg:
+		// Forward the message to the player browse handler
+		if m.panelMode == "plex-players" {
+			modelPtr := &m
+			updatedModel, cmd := modelPtr.handlePlayerBrowseUpdate(msg)
+			if updatedModel != nil {
+				if m2, ok := updatedModel.(model); ok {
+					m = m2
+				}
+			}
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Update the appropriate list based on panel mode
@@ -585,8 +611,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.albumList, cmd = m.albumList.Update(msg)
 	} else if m.panelMode == "plex-playlists" {
 		m.playlistList, cmd = m.playlistList.Update(msg)
-	} else {
-		m.list, cmd = m.list.Update(msg)
+	} else if m.panelMode == "plex-servers" {
+		m.serverList, cmd = m.serverList.Update(msg)
+	} else if m.panelMode == "plex-players" {
+		m.playerList, cmd = m.playerList.Update(msg)
 	}
 	return m, cmd
 }
@@ -604,16 +632,19 @@ func (m model) View() string {
 
 	// Build left panel content
 	var leftPanelContent string
-	if m.panelMode == "playback" {
+	switch m.panelMode {
+	case "playback":
 		leftPanelContent = m.playbackList.View()
-	} else if m.panelMode == "plex-artists" {
+	case "plex-artists":
 		leftPanelContent = m.artistList.View()
-	} else if m.panelMode == "plex-albums" {
+	case "plex-albums":
 		leftPanelContent = m.albumList.View()
-	} else if m.panelMode == "plex-playlists" {
+	case "plex-playlists":
 		leftPanelContent = m.playlistList.View()
-	} else {
-		leftPanelContent = m.list.View()
+	case "plex-servers":
+		leftPanelContent = m.serverList.View()
+	case "plex-players":
+		leftPanelContent = m.playerList.View()
 	}
 
 	// Left panel
@@ -625,7 +656,94 @@ func (m model) View() string {
 	rightSide := lipgloss.JoinVertical(lipgloss.Left, playbackPanel, controlsPanel)
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightSide)
-	return lipgloss.JoinVertical(lipgloss.Left, title, content)
+
+	// Combine all elements with the footer at the bottom
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinVertical(lipgloss.Left, title, content),
+		"\n"+m.footerView(),
+	)
+}
+
+// footerView renders the application footer
+func (m model) footerView() string {
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
+	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
+	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#8888ff"))
+	footerStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderTop(true).
+		BorderForeground(lipgloss.Color("#00ffff")).
+		Padding(0, 1)
+
+	var shuffleValue string
+	if m.shuffle {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
+	} else {
+		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
+	}
+	// --- Left side (your existing info)
+	left := ""
+	left += fmt.Sprintf("%s %s: %s \n", header.Render("Shuffle"), info.Render("(h)"), shuffleValue)
+	if len(m.config.PlexLibraries) > 0 {
+		left += fmt.Sprintf("%s %s: ", header.Render("Library"), info.Render("(Tab)"))
+		for _, library := range m.config.PlexLibraries {
+			if library.Key == m.config.PlexLibraryID {
+				left += fmt.Sprintf("%s | ", value.Render(library.Title))
+			} else {
+				left += fmt.Sprintf("%s | ", library.Title)
+			}
+		}
+		left = strings.TrimSuffix(left, "| ")
+		left += "\n"
+	}
+
+	left += fmt.Sprintf("%s %s: %s | ", header.Render("Server"), info.Render("(6)"), value.Render(m.config.PlexServerName))
+	left += fmt.Sprintf("%s %s: %s", header.Render("Player"), info.Render("(7)"), value.Render(m.config.SelectedPlayerName))
+
+	// --- Right side (new)
+	// Example: replace with whatever info you want (track, status, etc.)
+	var right string
+	if m.plexAuthenticated {
+		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✓"))
+	} else {
+		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✗"))
+	}
+
+	right += fmt.Sprintf("\n%s: %s ", header.Render("Last Command"), value.Render(m.lastCommand))
+
+	// --- Combine left and right
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+
+	var combinedLines []string
+	maxLines := max(len(leftLines), len(rightLines))
+
+	for i := 0; i < maxLines; i++ {
+		var l, r string
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+
+		padding := m.width - lipgloss.Width(l) - lipgloss.Width(r) - 4 // adjust for borders/padding
+		if padding < 1 {
+			padding = 1
+		}
+		line := l + strings.Repeat(" ", padding) + r
+		combinedLines = append(combinedLines, line)
+	}
+
+	return footerStyle.Width(m.width - 2).Render(strings.Join(combinedLines, "\n"))
+}
+
+// helper
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m model) playbackStatusView() string {
@@ -659,59 +777,22 @@ func (m model) playbackStatusView() string {
 }
 
 func (m model) appControlsView() string {
-	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
-	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
-
-	selected := "None"
-	if m.selected != "" {
-		selected = m.selected
-	}
-
-	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("App Info") + "\n\n"
+	body := ""
 
 	if m.usingDefaultCfg {
 		body += lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(
 			"⚠️ Using default config\n\n")
 	}
 
-	// Shuffle status with color
-	var shuffleValue string
-	if m.shuffle {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
-	} else {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
-	}
-
-	// Plex authentication status with color
-	var authValue string
-	if m.plexAuthenticated {
-		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("✓ Authenticated")
-	} else {
-		authValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("✗ Not Authenticated")
-	}
-
-	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
-		info.Render("Server"), value.Render(selected),
-		info.Render("Plex"), authValue,
-		info.Render("Shuffle"), shuffleValue,
-		info.Render("Last Command"), value.Render(m.lastCommand),
-	)
-
-	shuffleStatus := "OFF"
-	if m.shuffle {
-		shuffleStatus = "ON"
-	}
-
 	plexControls := ""
 	if m.plexAuthenticated {
-		plexControls = "\n  1 Servers  2 Libraries  3 Artists  4 Albums"
+		plexControls = "\n  1 Artists  2 Albums  3 Playlists"
 	}
 
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  a Add  e Edit\n  p Play/Pause\n  n Next\n  b Back\n  +/- Volume\n  s/Tab Panel\n  h Shuffle (%s)%s\n  q Quit", shuffleStatus, plexControls)
+	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  [p / space] Play/Pause\n  n Next\n  b Previous\n  +/- Volume %s\n  q Quit", plexControls)
 	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
 
-	return fmt.Sprintf("%s\n%s", body, controls)
+	return fmt.Sprintf("%s%s", body, controls)
 }
 
 // =====================
@@ -797,6 +878,27 @@ func (m *model) toggleShuffle() tea.Cmd {
 	} else {
 		m.sendCommand("playback/shuffle/off")
 		m.lastCommand = "Shuffle OFF"
+	}
+	return nil
+}
+
+// will use the config to cycle through the library options, it will check the current selected library and increment to the next one, if it is the last one it will go back to the first one
+func (m *model) cycleLibrary() tea.Cmd {
+	currentLibraryKey := m.config.PlexLibraryID
+
+	for i := range m.config.PlexLibraries {
+		if m.config.PlexLibraries[i].Key == currentLibraryKey {
+			if i == len(m.config.PlexLibraries)-1 {
+				m.config.PlexLibraryID = m.config.PlexLibraries[0].Key
+				m.config.PlexLibraryName = m.config.PlexLibraries[0].Title
+			} else {
+				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
+				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
+			}
+			m.saveServerConfig()
+			// Return a command that will refresh the current panel
+			return m.refreshCurrentPanel()
+		}
 	}
 	return nil
 }

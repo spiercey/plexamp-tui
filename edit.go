@@ -21,24 +21,7 @@ func (m *model) initEditMode(editType string, index int) {
 	m.editMode = editType
 	m.editIndex = index
 	m.editFocusIndex = 0
-
-	if editType == "server" {
-		// Single input for server hostname/IP
-		ti := textinput.New()
-		ti.Placeholder = "server.local or 192.168.1.100"
-		ti.Focus()
-		ti.CharLimit = 256
-		ti.Width = 50
-
-		// Get current value (only if editing, not adding)
-		if index >= 0 && index < len(m.list.Items()) {
-			if currentItem, ok := m.list.Items()[index].(item); ok {
-				ti.SetValue(string(currentItem))
-			}
-		}
-
-		m.editInputs = []textinput.Model{ti}
-	} else if editType == "playback" {
+	if editType == "playback" {
 		// Two inputs: name and URL
 		nameInput := textinput.New()
 		nameInput.Placeholder = "Playlist Name"
@@ -76,7 +59,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			// Save changes
-			if err := m.saveEdit(); err != nil {
+			if err := m.saveServerConfig(); err != nil {
 				m.lastCommand = fmt.Sprintf("Save failed: %v", err)
 			} else {
 				m.lastCommand = "Saved successfully"
@@ -126,28 +109,8 @@ func (m *model) cancelEdit() {
 	m.editInputs = nil
 }
 
-// saveEdit saves the edited values to the config files
-func (m *model) saveEdit() error {
-	if m.editMode == "server" {
-		return m.saveServerEdit()
-	} else if m.editMode == "playback" {
-		return m.savePlaybackEdit()
-	}
-	return fmt.Errorf("unknown edit mode: %s", m.editMode)
-}
-
-// saveServerEdit saves changes to server config
-func (m *model) saveServerEdit() error {
-	if len(m.editInputs) == 0 {
-		return fmt.Errorf("no input fields")
-	}
-
-	newValue := m.editInputs[0].Value()
-	if newValue == "" {
-		return fmt.Errorf("server cannot be empty")
-	}
-
-	// Load current config
+// saveServerConfig uses the model to fully save the config
+func (m *model) saveServerConfig() error {
 	cfgPath, err := configPath()
 	if err != nil {
 		return err
@@ -158,18 +121,15 @@ func (m *model) saveServerEdit() error {
 		return err
 	}
 
-	// Update or add the value
-	if m.editIndex == -1 {
-		// Adding new item
-		cfg.Instances = append(cfg.Instances, newValue)
-	} else if m.editIndex < len(cfg.Instances) {
-		// Editing existing item
-		cfg.Instances[m.editIndex] = newValue
-	} else {
-		return fmt.Errorf("invalid index")
-	}
+	cfg.ServerID = m.config.ServerID
+	cfg.PlexServerAddr = m.config.PlexServerAddr
+	cfg.SelectedPlayer = m.config.SelectedPlayer
+	cfg.SelectedPlayerName = m.config.SelectedPlayerName
+	cfg.PlexServerName = m.config.PlexServerName
+	cfg.PlexLibraryID = m.config.PlexLibraryID
+	cfg.PlexLibraryName = m.config.PlexLibraryName
+	cfg.PlexLibraries = m.config.PlexLibraries
 
-	// Save to file
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -178,17 +138,6 @@ func (m *model) saveServerEdit() error {
 	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
 		return err
 	}
-
-	// Update the list
-	var items []list.Item
-	for _, instance := range cfg.Instances {
-		items = append(items, item(instance))
-	}
-	m.list.SetItems(items)
-
-	// Return to servers panel
-	m.panelMode = "servers"
-	m.editInputs = nil
 
 	return nil
 }

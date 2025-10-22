@@ -36,6 +36,10 @@ func (i albumItem) FilterValue() string {
 // fetchAlbumsCmd fetches albums from the Plex server
 func (m *model) fetchAlbumsCmd() tea.Cmd {
 	logDebug("Fetching albums...")
+	// ✅ Reapply sizing
+	footerHeight := 3 // or dynamically measure your footer
+	availableHeight := m.height - footerHeight - 5
+	m.albumList.SetSize(m.width/2-4, availableHeight)
 	if m.config == nil {
 		return func() tea.Msg {
 			return albumsFetchedMsg{err: fmt.Errorf("no config available")}
@@ -73,7 +77,6 @@ func (m *model) initAlbumBrowse() {
 	m.albumList = list.New(items, delegate, 0, 0)
 	m.albumList.Title = "Plex Albums"
 	m.albumList.SetShowFilter(true)
-	m.albumList.SetShowStatusBar(false)
 	m.albumList.SetFilteringEnabled(true)
 	m.albumList.Styles.Title = titleStyle
 	m.albumList.Styles.PaginationStyle = paginationStyle
@@ -195,6 +198,11 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = fmt.Sprintf("Loaded %d albums", len(msg.albums))
 		logDebug(fmt.Sprintf("Updated model with new album list. List has %d items", m.albumList.VisibleItems()))
+
+		// ✅ Reapply sizing
+		footerHeight := 3 // or dynamically measure your footer
+		availableHeight := m.height - footerHeight - 5
+		m.albumList.SetSize(m.width/2-4, availableHeight)
 
 		// Force a redraw
 		return m, tea.Batch(tea.ClearScreen, func() tea.Msg { return nil })

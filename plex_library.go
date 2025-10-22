@@ -13,6 +13,18 @@ import (
 // Plex Library Types
 // =====================
 
+type PlexLibraryContainer struct {
+	XMLName   xml.Name      `xml:"MediaContainer"`
+	Size      int           `xml:"size,attr"`
+	Libraries []PlexLibrary `xml:"Directory"`
+}
+
+type PlexLibrary struct {
+	Key   string `xml:"key,attr"`
+	Title string `xml:"title,attr"`
+	Type  string `xml:"type,attr"`
+}
+
 // PlexDirectory represents a generic directory item from Plex
 type PlexDirectory struct {
 	XMLName     xml.Name `xml:"Directory"`
@@ -195,12 +207,8 @@ func FetchArtistAlbums(serverAddr, artistRatingKey, token string) ([]PlexAlbum, 
 	}
 
 	return []PlexAlbum{}, nil
-	// logDebug(fmt.Sprintf("Fetched %d albums for artist", len(container.Albums)))
-
-	// return container.Albums, nil
 }
 
-// FetchPlaylists retrieves all playlists from the Plex library, using url format: curl "http://<serverAddr>:<port>/playlists?X-Plex-Token=<token>"
 func FetchPlaylists(serverAddr, token string) ([]PlexPlaylist, error) {
 	urlStr := fmt.Sprintf("http://%s/playlists?X-Plex-Token=%s", serverAddr, url.QueryEscape(token))
 
@@ -227,4 +235,41 @@ func FetchPlaylists(serverAddr, token string) ([]PlexPlaylist, error) {
 	}
 
 	return container.Playlists, nil
+}
+
+func FetchLibrary(serverAddr, token string) ([]PlexLibrary, error) {
+	urlStr := fmt.Sprintf("http://%s/library/sections?X-Plex-Token=%s", serverAddr, url.QueryEscape(token))
+
+	logDebug(fmt.Sprintf("Fetching library from: %s", urlStr))
+
+	resp, err := http.Get(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch library: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var container PlexLibraryContainer
+	if err := xml.Unmarshal(body, &container); err != nil {
+		return nil, fmt.Errorf("failed to parse XML: %w", err)
+	}
+
+	logDebug(fmt.Sprintf("Fetched %d libraries", len(container.Libraries)))
+	// filter just artist libraries
+	var libraries []PlexLibrary
+	for _, lib := range container.Libraries {
+		if lib.Type == "artist" {
+			libraries = append(libraries, lib)
+		}
+	}
+
+	return libraries, nil
 }
