@@ -271,5 +271,7 @@ func FetchLibrary(serverAddr, token string) ([]PlexLibrary, error) {
 		}
 	}
 
+	logDebug(fmt.Sprintf("Fetched %d artist libraries", len(libraries)))
+
 	return libraries, nil
 }
