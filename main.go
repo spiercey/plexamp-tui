@@ -327,6 +327,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.config.PlexLibraries = msg.libraries
 
 			found := false
+			if len(msg.libraries) == 0 {
+				logDebug("No libraries found on this server")
+				m.panelMode = "playback"
+				m.lastCommand = "Server Selected Failed, No Libraries"
+				m.status = "No libraries found on this server"
+				return m, nil
+			}
+
 			//check if new library list has our configured library
 			for _, lib := range msg.libraries {
 				if lib.Title == m.config.PlexLibraryName {
@@ -336,10 +344,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if !found {
+				logDebug("Current Library not found on this server, using first library")
 				m.config.PlexLibraryName = msg.libraries[0].Title
 				m.config.PlexLibraryID = msg.libraries[0].Key
 			}
 
+			logDebug(fmt.Sprintf("Saving server config: %v", m.config))
 			m.saveServerConfig()
 			m.lastCommand = "Server Selected"
 			m.status = ""
