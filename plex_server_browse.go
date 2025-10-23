@@ -107,6 +107,7 @@ func (m *model) selectServerCmd(server serverItem) tea.Cmd {
 	return func() tea.Msg {
 
 		libraries, err := FetchLibrary(fmt.Sprintf("%s:%s", server.address, server.port), getPlexToken())
+		logDebug(fmt.Sprintf("Fetched libraries: %v", libraries))
 
 		if err != nil {
 			logDebug(fmt.Sprintf("Error fetching libraries: %v", err))
