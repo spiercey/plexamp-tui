@@ -214,18 +214,20 @@ func checkPlexPIN(pinID int) (*PlexPinResponse, error) {
 func getPlexUser(token string) (*PlexUser, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
+	authUrl := fmt.Sprintf("https://plex.tv/users/account?X-Plex-Token=%s", token)
+
 	// Create the request
-	req, err := http.NewRequest("GET", "https://plex.tv/users/account", nil)
+	req, err := http.NewRequest("GET", authUrl, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// Add headers
-	headers := createPlexHeaders()
-	headers["X-Plex-Token"] = token
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
+	// headers := createPlexHeaders()
+	// headers["X-Plex-Token"] = token
+	// for key, value := range headers {
+		// req.Header.Set(key, value)
+	// }
 
 	// Make the request
 	resp, err := client.Do(req)
