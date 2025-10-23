@@ -29,18 +29,24 @@ func (m *model) initEditMode(editType string, index int) {
 		nameInput.CharLimit = 100
 		nameInput.Width = 50
 
-		urlInput := textinput.New()
-		urlInput.Placeholder = "https://listen.plex.tv/player/playback/..."
-		urlInput.CharLimit = 1000
-		urlInput.Width = 50
+		metadataKeyInput := textinput.New()
+		metadataKeyInput.Placeholder = "Metadata Key"
+		metadataKeyInput.CharLimit = 1000
+		metadataKeyInput.Width = 50
+
+		typeInput := textinput.New()
+		typeInput.Placeholder = "artist"
+		typeInput.CharLimit = 100
+		typeInput.Width = 50
 
 		// Get current values (only if editing, not adding)
 		if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
 			nameInput.SetValue(m.playbackConfig.Items[index].Name)
-			urlInput.SetValue(m.playbackConfig.Items[index].URL)
+			metadataKeyInput.SetValue(m.playbackConfig.Items[index].MetadataKey)
+			typeInput.SetValue(m.playbackConfig.Items[index].Type)
 		}
 
-		m.editInputs = []textinput.Model{nameInput, urlInput}
+		m.editInputs = []textinput.Model{nameInput, typeInput, metadataKeyInput}
 	}
 }
 
@@ -59,7 +65,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			// Save changes
-			if err := m.saveServerConfig(); err != nil {
+			if err := m.savePlaybackEdit(); err != nil {
 				m.lastCommand = fmt.Sprintf("Save failed: %v", err)
 			} else {
 				m.lastCommand = "Saved successfully"
@@ -109,39 +115,6 @@ func (m *model) cancelEdit() {
 	m.editInputs = nil
 }
 
-// saveServerConfig uses the model to fully save the config
-func (m *model) saveServerConfig() error {
-	cfgPath, err := configPath()
-	if err != nil {
-		return err
-	}
-
-	cfg, err := loadConfig(cfgPath)
-	if err != nil {
-		return err
-	}
-
-	cfg.ServerID = m.config.ServerID
-	cfg.PlexServerAddr = m.config.PlexServerAddr
-	cfg.SelectedPlayer = m.config.SelectedPlayer
-	cfg.SelectedPlayerName = m.config.SelectedPlayerName
-	cfg.PlexServerName = m.config.PlexServerName
-	cfg.PlexLibraryID = m.config.PlexLibraryID
-	cfg.PlexLibraryName = m.config.PlexLibraryName
-	cfg.PlexLibraries = m.config.PlexLibraries
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // savePlaybackEdit saves changes to playback config
 func (m *model) savePlaybackEdit() error {
 	if len(m.editInputs) < 2 {
@@ -149,22 +122,26 @@ func (m *model) savePlaybackEdit() error {
 	}
 
 	newName := m.editInputs[0].Value()
-	newURL := m.editInputs[1].Value()
+	newType := m.editInputs[1].Value()
+	newMetadataKey := m.editInputs[2].Value()
 
 	if newName == "" {
 		return fmt.Errorf("name cannot be empty")
 	}
-	if newURL == "" {
+	if newType == "" {
 		return fmt.Errorf("URL cannot be empty")
+	}
+	if newMetadataKey == "" {
+		return fmt.Errorf("metadata key cannot be empty")
 	}
 
 	// Load current config
-	cfgPath, err := playbackConfigPath()
+	cfgPath, err := favoritesConfigPath()
 	if err != nil {
 		return err
 	}
 
-	cfg, err := loadPlaybackConfig(cfgPath)
+	cfg, err := loadFavoritesConfig(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -172,14 +149,16 @@ func (m *model) savePlaybackEdit() error {
 	// Update or add the value
 	if m.editIndex == -1 {
 		// Adding new item
-		cfg.Items = append(cfg.Items, PlaybackItem{
-			Name: newName,
-			URL:  newURL,
+		cfg.Items = append(cfg.Items, FavoriteItem{
+			Name:        newName,
+			Type:        newType,
+			MetadataKey: newMetadataKey,
 		})
 	} else if m.editIndex < len(cfg.Items) {
 		// Editing existing item
 		cfg.Items[m.editIndex].Name = newName
-		cfg.Items[m.editIndex].URL = newURL
+		cfg.Items[m.editIndex].Type = newType
+		cfg.Items[m.editIndex].MetadataKey = newMetadataKey
 	} else {
 		return fmt.Errorf("invalid index")
 	}
@@ -217,25 +196,54 @@ func (m model) editPanelView() string {
 		action = "Add"
 	}
 
-	if m.editMode == "server" {
-		content = fmt.Sprintf("%s Server\n\n", action)
-		content += "Hostname/IP:\n"
-		if len(m.editInputs) > 0 {
-			content += m.editInputs[0].View() + "\n"
-		}
-	} else if m.editMode == "playback" {
+	if m.editMode == "playback" {
 		content = fmt.Sprintf("%s Playback Item\n\n", action)
 		content += "Name:\n"
 		if len(m.editInputs) > 0 {
 			content += m.editInputs[0].View() + "\n\n"
 		}
-		content += "URL:\n"
+		content += "Type:\n"
 		if len(m.editInputs) > 1 {
 			content += m.editInputs[1].View() + "\n"
+		}
+		content += "Metadata Key:\n"
+		if len(m.editInputs) > 2 {
+			content += m.editInputs[2].View() + "\n"
 		}
 	}
 
 	content += "\n\nEnter to save • Esc to cancel • Tab to switch fields"
 
 	return content
+}
+
+// deletePlaybackItem removes a playback item from the config
+func (m *model) deletePlaybackItem(index int) error {
+	if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
+		m.playbackConfig.Items = append(m.playbackConfig.Items[:index], m.playbackConfig.Items[index+1:]...)
+	}
+
+	// Update the list
+	var items []list.Item
+	for _, pb := range m.playbackConfig.Items {
+		items = append(items, item(pb.Name))
+	}
+	m.playbackList.SetItems(items)
+
+	// Save to file
+	data, err := json.MarshalIndent(m.playbackConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	cfgPath, err := favoritesConfigPath()
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
+		return err
+	}
+
+	return nil
 }

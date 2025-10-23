@@ -34,18 +34,6 @@ type Config struct {
 	PlexLibraries      []PlexLibrary `json:"plex_libraries"`       // List of Plex libraries
 }
 
-func configPath() (string, error) {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "plexamp-tui", "config.json"), nil
-}
-
 func loadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -123,7 +111,7 @@ type model struct {
 
 	// Panel mode: "servers", "playback", "edit", "plex-servers", "plex-libraries", "plex-artists", "plex-albums"
 	panelMode      string
-	playbackConfig *PlaybackConfig
+	playbackConfig *Favorites
 	config         *Config // Store config for server ID access
 
 	// Edit mode fields
@@ -205,7 +193,7 @@ func main() {
 	if *configFlag != "" {
 		cfgPath = *configFlag
 	} else {
-		cfgPath, err = configPath()
+		cfgPath, err = getConfigPath()
 		if err != nil {
 			fmt.Println("Error determining config path:", err)
 			os.Exit(1)
@@ -234,14 +222,14 @@ func main() {
 	}
 
 	// Load playback config
-	playbackCfgPath, _ := playbackConfigPath()
-	playbackCfg, err := loadPlaybackConfig(playbackCfgPath)
+	playbackCfgPath, _ := favoritesConfigPath()
+	playbackCfg, err := loadFavoritesConfig(playbackCfgPath)
 	if err != nil && os.IsNotExist(err) {
 		fmt.Printf("No playback config found, creating default one at %s\n", playbackCfgPath)
-		if err := saveDefaultPlaybackConfig(playbackCfgPath); err != nil {
+		if err := saveDefaultFavoritesConfig(playbackCfgPath); err != nil {
 			fmt.Println("Warning: Could not create default playback config:", err)
 		}
-		playbackCfg, _ = loadPlaybackConfig(playbackCfgPath)
+		playbackCfg, _ = loadFavoritesConfig(playbackCfgPath)
 	}
 
 	// Create playback list
@@ -476,14 +464,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.initEditMode("playback", index)
 				return m, nil
 
+			case "d":
+				// Delete selected playback item
+				index := m.playbackList.Index()
+				m.deletePlaybackItem(index)
+				return m, nil
+
 			case "enter":
 				// Select playback item - don't switch back to servers
 				if selected, ok := m.playbackList.SelectedItem().(item); ok {
 					// Find the matching playback config item
 					for _, pb := range m.playbackConfig.Items {
 						if pb.Name == string(selected) {
-							logDebug(fmt.Sprintf("Selected playback: %s -> %s (shuffle: %v)", pb.Name, pb.URL, m.shuffle))
-							return m, m.triggerPlaybackCmd(pb.URL)
+							return m, m.triggerFavoritePlayback(pb)
 						}
 					}
 				}
