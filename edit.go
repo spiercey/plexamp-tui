@@ -119,9 +119,9 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateFocus()
 			return m, nil
 
-		// Handle arrow key navigation for type selection
+		// Handle arrow key navigation for type selection (only when type selector is focused)
 		case "left", "h":
-			if m.editFocusIndex == 1 { // Type selector is focused
+			if m.editFocusIndex == 1 { // Only process if type selector is focused
 				currentIndex := m.typeSelect.Index()
 				if currentIndex > 0 {
 					m.typeSelect.Select(currentIndex - 1)
@@ -130,27 +130,32 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "right", "l":
-			if m.editFocusIndex == 1 { // Type selector is focused
+			if m.editFocusIndex == 1 { // Only process if type selector is focused
 				currentIndex := m.typeSelect.Index()
 				if currentIndex < len(m.typeSelect.Items())-1 {
 					m.typeSelect.Select(currentIndex + 1)
 				}
 				return m, nil
 			}
+			
+		// For all other keys, let the input handling below take care of it
+		default:
+			// No special handling needed here - let the input processing below handle it
 		}
 	}
 
 	var cmd tea.Cmd
 	
 	// Handle input based on focus
-	if m.editFocusIndex < len(m.editInputs) {
-		// Handle text input fields
-		m.editInputs[m.editFocusIndex], cmd = m.editInputs[m.editFocusIndex].Update(msg)
-	} else {
-		// Handle type select dropdown
+	switch m.editFocusIndex {
+	case 0: // Name input
+		m.editInputs[0], cmd = m.editInputs[0].Update(msg)
+	case 1: // Type selector
 		var listCmd tea.Cmd
 		m.typeSelect, listCmd = m.typeSelect.Update(msg)
 		cmd = listCmd
+	case 2: // Metadata Key input
+		m.editInputs[1], cmd = m.editInputs[1].Update(msg)
 	}
 	
 	return m, cmd
@@ -158,17 +163,19 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateFocus updates the focus state of all input fields and the type select
 func (m *model) updateFocus() {
+	// First blur all inputs
+	for i := range m.editInputs {
+		m.editInputs[i].Blur()
+	}
+
 	switch m.editFocusIndex {
 	case 0: // Name input
 		m.editInputs[0].Focus()
-		m.editInputs[1].Blur()
-	case 1: // Type select
-		m.editInputs[0].Blur()
-		m.editInputs[1].Blur()
-		// Ensure the type select is visible in the view
-		m.typeSelect.ResetSelected()
-	case 2: // Metadata input
-		m.editInputs[0].Blur()
+	case 1: // Type select - no input to focus, handled by typeSelect
+		if m.typeSelect.Index() >= 0 && m.typeSelect.Index() < len(m.typeSelect.Items()) {
+			m.typeSelect.Select(m.typeSelect.Index())
+		}
+	case 2: // Metadata Key input
 		m.editInputs[1].Focus()
 	}
 }
@@ -305,11 +312,13 @@ func (m model) editPanelView() string {
 		typeContent := ""
 		for i, option := range typeOptions {
 			itemStyle := lipgloss.NewStyle().PaddingLeft(2)
-			if m.editFocusIndex == 1 {
-				if i == m.typeSelect.Index() {
-					itemStyle = itemStyle.Background(lipgloss.Color("62")).Bold(true)
-				}
+			isSelected := i == m.typeSelect.Index()
+			
+			// Always show selected item with blue highlight
+			if isSelected {
+				itemStyle = itemStyle.Background(lipgloss.Color("62")).Bold(true)
 			}
+			
 			if i > 0 {
 				typeContent += " "
 			}
