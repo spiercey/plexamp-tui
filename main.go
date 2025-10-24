@@ -118,6 +118,7 @@ type model struct {
 	editMode       string // "server" or "playback"
 	editIndex      int    // Index of item being edited
 	editInputs     []textinput.Model
+	typeSelect     list.Model // Dropdown for type selection
 	editFocusIndex int
 }
 

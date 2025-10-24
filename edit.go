@@ -7,8 +7,15 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+type typeItem string
+
+func (i typeItem) Title() string       { return string(i) }
+func (i typeItem) Description() string { return "" }
+func (i typeItem) FilterValue() string { return string(i) }
 
 // =====================
 // Edit Mode Functions
@@ -21,6 +28,7 @@ func (m *model) initEditMode(editType string, index int) {
 	m.editMode = editType
 	m.editIndex = index
 	m.editFocusIndex = 0
+
 	if editType == "playback" {
 		// Two inputs: name and URL
 		nameInput := textinput.New()
@@ -34,19 +42,43 @@ func (m *model) initEditMode(editType string, index int) {
 		metadataKeyInput.CharLimit = 1000
 		metadataKeyInput.Width = 50
 
-		typeInput := textinput.New()
-		typeInput.Placeholder = "artist"
-		typeInput.CharLimit = 100
-		typeInput.Width = 50
+		// Create list for type selection
+		typeItems := []list.Item{
+			typeItem("Artist"),
+			typeItem("Album"),
+			typeItem("Playlist"),
+			typeItem("Station"),
+		}
+
+		// Initialize the list with default settings
+		typeSelect := list.New(typeItems, list.NewDefaultDelegate(), 30, 10)
+		typeSelect.Title = "Select Type"
+		typeSelect.SetShowStatusBar(false)
+		typeSelect.SetFilteringEnabled(false)
+
+		// Set default value if editing
+		if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
+			switch m.playbackConfig.Items[index].Type {
+			case "artist":
+				typeSelect.Select(0)
+			case "album":
+				typeSelect.Select(1)
+			case "playlist":
+				typeSelect.Select(2)
+			case "station":
+				typeSelect.Select(3)
+			}
+		}
+
+		m.typeSelect = typeSelect
 
 		// Get current values (only if editing, not adding)
 		if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
 			nameInput.SetValue(m.playbackConfig.Items[index].Name)
 			metadataKeyInput.SetValue(m.playbackConfig.Items[index].MetadataKey)
-			typeInput.SetValue(m.playbackConfig.Items[index].Type)
 		}
 
-		m.editInputs = []textinput.Model{nameInput, typeInput, metadataKeyInput}
+		m.editInputs = []textinput.Model{nameInput, metadataKeyInput}
 	}
 }
 
@@ -54,7 +86,7 @@ func (m *model) initEditMode(editType string, index int) {
 func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
+		switch key := msg.String(); key {
 		case "ctrl+c":
 			return m, tea.Quit
 
@@ -72,37 +104,73 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "tab", "shift+tab":
-			// Switch focus between inputs (only for playback with multiple fields)
-			if len(m.editInputs) > 1 {
-				if msg.String() == "tab" {
-					m.editFocusIndex = (m.editFocusIndex + 1) % len(m.editInputs)
-				} else {
-					m.editFocusIndex--
-					if m.editFocusIndex < 0 {
-						m.editFocusIndex = len(m.editInputs) - 1
-					}
-				}
-
-				// Update focus
-				for i := range m.editInputs {
-					if i == m.editFocusIndex {
-						m.editInputs[i].Focus()
-					} else {
-						m.editInputs[i].Blur()
-					}
-				}
-			}
+		case "tab":
+			// Move focus to next element
+			m.editFocusIndex = (m.editFocusIndex + 1) % 3 // We have 3 focusable elements now
+			m.updateFocus()
 			return m, nil
+			
+		case "shift+tab":
+			// Move focus to previous element
+			m.editFocusIndex--
+			if m.editFocusIndex < 0 {
+				m.editFocusIndex = 2 // Wrap around to the last element
+			}
+			m.updateFocus()
+			return m, nil
+
+		// Handle arrow key navigation for type selection
+		case "left", "h":
+			if m.editFocusIndex == 1 { // Type selector is focused
+				currentIndex := m.typeSelect.Index()
+				if currentIndex > 0 {
+					m.typeSelect.Select(currentIndex - 1)
+				}
+				return m, nil
+			}
+
+		case "right", "l":
+			if m.editFocusIndex == 1 { // Type selector is focused
+				currentIndex := m.typeSelect.Index()
+				if currentIndex < len(m.typeSelect.Items())-1 {
+					m.typeSelect.Select(currentIndex + 1)
+				}
+				return m, nil
+			}
 		}
 	}
 
-	// Update the focused input
 	var cmd tea.Cmd
+	
+	// Handle input based on focus
 	if m.editFocusIndex < len(m.editInputs) {
+		// Handle text input fields
 		m.editInputs[m.editFocusIndex], cmd = m.editInputs[m.editFocusIndex].Update(msg)
+	} else {
+		// Handle type select dropdown
+		var listCmd tea.Cmd
+		m.typeSelect, listCmd = m.typeSelect.Update(msg)
+		cmd = listCmd
 	}
+	
 	return m, cmd
+}
+
+// updateFocus updates the focus state of all input fields and the type select
+func (m *model) updateFocus() {
+	switch m.editFocusIndex {
+	case 0: // Name input
+		m.editInputs[0].Focus()
+		m.editInputs[1].Blur()
+	case 1: // Type select
+		m.editInputs[0].Blur()
+		m.editInputs[1].Blur()
+		// Ensure the type select is visible in the view
+		m.typeSelect.ResetSelected()
+	case 2: // Metadata input
+		m.editInputs[0].Blur()
+		m.editInputs[1].Focus()
+	}
 }
 
 // cancelEdit returns to the previous panel mode
@@ -122,14 +190,28 @@ func (m *model) savePlaybackEdit() error {
 	}
 
 	newName := m.editInputs[0].Value()
-	newType := m.editInputs[1].Value()
-	newMetadataKey := m.editInputs[2].Value()
+	newMetadataKey := m.editInputs[1].Value()
+
+	// Get the selected type from the dropdown
+	var selectedType string
+	if selectedItem, ok := m.typeSelect.SelectedItem().(typeItem); ok {
+		switch string(selectedItem) {
+		case "Artist":
+			selectedType = "artist"
+		case "Album":
+			selectedType = "album"
+		case "Playlist":
+			selectedType = "playlist"
+		case "Station":
+			selectedType = "station"
+		}
+	}
 
 	if newName == "" {
 		return fmt.Errorf("name cannot be empty")
 	}
-	if newType == "" {
-		return fmt.Errorf("URL cannot be empty")
+	if selectedType == "" {
+		return fmt.Errorf("please select a valid type")
 	}
 	if newMetadataKey == "" {
 		return fmt.Errorf("metadata key cannot be empty")
@@ -151,13 +233,13 @@ func (m *model) savePlaybackEdit() error {
 		// Adding new item
 		cfg.Items = append(cfg.Items, FavoriteItem{
 			Name:        newName,
-			Type:        newType,
+			Type:        selectedType,
 			MetadataKey: newMetadataKey,
 		})
 	} else if m.editIndex < len(cfg.Items) {
 		// Editing existing item
 		cfg.Items[m.editIndex].Name = newName
-		cfg.Items[m.editIndex].Type = newType
+		cfg.Items[m.editIndex].Type = selectedType
 		cfg.Items[m.editIndex].MetadataKey = newMetadataKey
 	} else {
 		return fmt.Errorf("invalid index")
@@ -197,22 +279,57 @@ func (m model) editPanelView() string {
 	}
 
 	if m.editMode == "playback" {
-		content = fmt.Sprintf("%s Playback Item\n\n", action)
-		content += "Name:\n"
+		// Title
+		titleStyle := lipgloss.NewStyle().Bold(true).Underline(true)
+		content += titleStyle.Render(fmt.Sprintf("%s Playback Item", action)) + "\n\n"
+		
+		// Name input
+		nameLabel := "Name:"
+		if m.editFocusIndex == 0 {
+			nameLabel = "→ " + nameLabel
+		}
+		content += nameLabel + "\n"
 		if len(m.editInputs) > 0 {
 			content += m.editInputs[0].View() + "\n\n"
 		}
-		content += "Type:\n"
+		
+		// Type selection
+		typeLabel := "Type:"
+		if m.editFocusIndex == 1 {
+			typeLabel = "→ " + typeLabel
+		}
+		content += typeLabel + "\n"
+		
+		// Custom type selection display
+		typeOptions := []string{"Artist", "Album", "Playlist", "Station"}
+		typeContent := ""
+		for i, option := range typeOptions {
+			itemStyle := lipgloss.NewStyle().PaddingLeft(2)
+			if m.editFocusIndex == 1 {
+				if i == m.typeSelect.Index() {
+					itemStyle = itemStyle.Background(lipgloss.Color("62")).Bold(true)
+				}
+			}
+			if i > 0 {
+				typeContent += " "
+			}
+			typeContent += itemStyle.Render(option)
+		}
+		content += typeContent + "\n\n"
+		
+		// Metadata key input
+		metadataLabel := "Metadata Key:"
+		if m.editFocusIndex == 2 {
+			metadataLabel = "→ " + metadataLabel
+		}
+		content += metadataLabel + "\n"
 		if len(m.editInputs) > 1 {
 			content += m.editInputs[1].View() + "\n"
 		}
-		content += "Metadata Key:\n"
-		if len(m.editInputs) > 2 {
-			content += m.editInputs[2].View() + "\n"
-		}
 	}
 
-	content += "\n\nEnter to save • Esc to cancel • Tab to switch fields"
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render
+	content += "\n\n" + helpStyle("Enter: Save • Esc: Cancel • ↑/↓: Navigate • Tab: Switch fields")
 
 	return content
 }
