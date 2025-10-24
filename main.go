@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -242,6 +244,41 @@ func main() {
 	}
 	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
 	playbackList.Title = "Favorites"
+	// Add keys to the short help (shown at the bottom of the list)
+	playbackList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("a"),
+				key.WithHelp("a", "add"),
+			),
+			key.NewBinding(
+				key.WithKeys("e"),
+				key.WithHelp("e", "edit"),
+			),
+			key.NewBinding(
+				key.WithKeys("d"),
+				key.WithHelp("d", "delete"),
+			),
+		}
+	}
+
+	// Add keys to the full help (shown when pressing '?')
+	playbackList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("a"),
+				key.WithHelp("a", "Add new item"),
+			),
+			key.NewBinding(
+				key.WithKeys("e"),
+				key.WithHelp("e", "Edit selected item"),
+			),
+			key.NewBinding(
+				key.WithKeys("d"),
+				key.WithHelp("d", "Delete selected item"),
+			),
+		}
+	}
 
 	m := model{
 		playbackList:      playbackList,
