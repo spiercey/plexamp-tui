@@ -1,7 +1,8 @@
-package main
+package ui
 
 import (
 	"fmt"
+	"plexamp-tui/internal/plex"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,7 +36,7 @@ func (i albumItem) FilterValue() string {
 
 // fetchAlbumsCmd fetches albums from the Plex server
 func (m *model) fetchAlbumsCmd() tea.Cmd {
-	logDebug("Fetching albums...")
+	log.Debug("Fetching albums...")
 	// ✅ Reapply sizing
 	footerHeight := 3 // or dynamically measure your footer
 	availableHeight := m.height - footerHeight - 5
@@ -46,7 +47,7 @@ func (m *model) fetchAlbumsCmd() tea.Cmd {
 		}
 	}
 
-	token := getPlexToken()
+	token := plexClient.GetPlexToken()
 	if token == "" {
 		return func() tea.Msg {
 			return albumsFetchedMsg{err: fmt.Errorf("no Plex token found - run with --auth flag")}
@@ -57,7 +58,7 @@ func (m *model) fetchAlbumsCmd() tea.Cmd {
 	libraryID := m.config.PlexLibraryID
 
 	return func() tea.Msg {
-		albums, err := FetchAlbums(serverAddr, libraryID, token)
+		albums, err := plexClient.FetchAlbums(serverAddr, libraryID, token)
 		return albumsFetchedMsg{albums: albums, err: err}
 	}
 }
@@ -112,7 +113,7 @@ func (m *model) playAlbumCmd(ratingKey string) tea.Cmd {
 }
 
 func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	logDebug(fmt.Sprintf("handleAlbumBrowseUpdate received message: %T", msg))
+	log.Debug(fmt.Sprintf("handleAlbumBrowseUpdate received message: %T", msg))
 
 	// If we're in filtering mode, let the list handle the input
 	if m.albumList.FilterState() == list.Filtering {
@@ -135,7 +136,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Play selected album's tracks
 			if selected, ok := m.albumList.SelectedItem().(albumItem); ok {
-				logDebug(fmt.Sprintf("Playing album: %s (ratingKey: %s)", selected.title, selected.ratingKey))
+				log.Debug(fmt.Sprintf("Playing album: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s", selected.title)
 				return m, m.playAlbumCmd(selected.ratingKey)
 			}
@@ -155,11 +156,11 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case albumsFetchedMsg:
-		logDebug(fmt.Sprintf("albumsFetchedMsg received with %d albums, error: %v", len(msg.albums), msg.err))
+		log.Debug(fmt.Sprintf("albumsFetchedMsg received with %d albums, error: %v", len(msg.albums), msg.err))
 		if msg.err != nil {
 			errMsg := fmt.Sprintf("Error fetching albums: %v", msg.err)
 			m.status = errMsg
-			logDebug(errMsg)
+			log.Debug(errMsg)
 			return m, nil
 		}
 
@@ -167,7 +168,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var items []list.Item
 		for i, album := range msg.albums {
 			if i < 5 { // Only log first 5 albums to avoid log spam
-				logDebug(fmt.Sprintf("Adding album %d: %s (ratingKey: %s)", i+1, album.Title, album.RatingKey))
+				log.Debug(fmt.Sprintf("Adding album %d: %s (ratingKey: %s)", i+1, album.Title, album.RatingKey))
 			}
 			items = append(items, albumItem{
 				title:     album.Title,
@@ -177,7 +178,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 
-		logDebug(fmt.Sprintf("Creating new list with %d items", len(items)))
+		log.Debug(fmt.Sprintf("Creating new list with %d items", len(items)))
 		// Create a new list with the fetched items
 		// Preserve the current filter state
 		filterState := m.albumList.FilterState()
@@ -197,7 +198,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.albumList.FilterInput.SetValue(filterValue)
 		}
 		m.status = fmt.Sprintf("Loaded %d albums", len(msg.albums))
-		logDebug(fmt.Sprintf("Updated model with new album list. List has %d items", m.albumList.VisibleItems()))
+		log.Debug(fmt.Sprintf("Updated model with new album list. List has %d items", m.albumList.VisibleItems()))
 
 		// ✅ Reapply sizing
 		footerHeight := 3 // or dynamically measure your footer
@@ -233,6 +234,6 @@ func (m *model) ViewAlbum() string {
 
 // albumsFetchedMsg is a message containing fetched albums
 type albumsFetchedMsg struct {
-	albums []PlexAlbum
+	albums []plex.PlexAlbum
 	err    error
 }

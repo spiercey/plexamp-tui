@@ -1,4 +1,4 @@
-package main
+package ui
 
 import (
 	"fmt"
@@ -85,16 +85,16 @@ func SendPlaybackURL(serverIP, fullURL string, shuffle bool) error {
 	localURL := strings.Replace(modifiedURL, "https://listen.plex.tv", fmt.Sprintf("http://%s:32500", serverIP), 1)
 	localURL = strings.Replace(localURL, "http://listen.plex.tv", fmt.Sprintf("http://%s:32500", serverIP), 1)
 
-	logDebug(fmt.Sprintf("Sending playback URL: %s", localURL))
+	log.Debug(fmt.Sprintf("Sending playback URL: %s", localURL))
 
 	resp, err := http.Get(localURL)
 	if err != nil {
-		logDebug(fmt.Sprintf("Request error: %v", err))
+		log.Debug(fmt.Sprintf("Request error: %v", err))
 		return fmt.Errorf("failed to connect to %s: %w", serverIP, err)
 	}
 	defer resp.Body.Close()
 
-	logDebug(fmt.Sprintf("Response status: %d", resp.StatusCode))
+	log.Debug(fmt.Sprintf("Response status: %d", resp.StatusCode))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)

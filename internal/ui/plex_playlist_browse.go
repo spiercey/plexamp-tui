@@ -1,7 +1,8 @@
-package main
+package ui
 
 import (
 	"fmt"
+	"plexamp-tui/internal/plex"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,7 +23,7 @@ type playlistItem struct {
 
 // playlistsFetchedMsg is a message containing fetched playlists
 type playlistsFetchedMsg struct {
-	playlists []PlexPlaylist
+	playlists []plex.PlexPlaylist
 	err       error
 }
 
@@ -41,7 +42,7 @@ func (i playlistItem) FilterValue() string {
 
 // fetchPlaylistsCmd fetches playlists from the Plex server
 func (m *model) fetchPlaylistsCmd() tea.Cmd {
-	logDebug("Fetching playlists...")
+	log.Debug("Fetching playlists...")
 	// ✅ Reapply sizing
 	footerHeight := 3 // or dynamically measure your footer
 	availableHeight := m.height - footerHeight - 5
@@ -52,7 +53,7 @@ func (m *model) fetchPlaylistsCmd() tea.Cmd {
 		}
 	}
 
-	token := getPlexToken()
+	token := plexClient.GetPlexToken()
 	if token == "" {
 		return func() tea.Msg {
 			return playlistsFetchedMsg{err: fmt.Errorf("no Plex token found - run with --auth flag")}
@@ -62,7 +63,7 @@ func (m *model) fetchPlaylistsCmd() tea.Cmd {
 	serverAddr := m.config.PlexServerAddr
 
 	return func() tea.Msg {
-		playlists, err := FetchPlaylists(serverAddr, token)
+		playlists, err := plexClient.FetchPlaylists(serverAddr, token)
 		return playlistsFetchedMsg{playlists: playlists, err: err}
 	}
 }
@@ -117,7 +118,7 @@ func (m *model) playPlaylistCmd(ratingKey string) tea.Cmd {
 }
 
 func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	logDebug(fmt.Sprintf("handlePlaylistBrowseUpdate received message: %T", msg))
+	log.Debug(fmt.Sprintf("handlePlaylistBrowseUpdate received message: %T", msg))
 
 	// If we're in filtering mode, let the list handle the input
 	if m.playlistList.FilterState() == list.Filtering {
@@ -140,7 +141,7 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Play selected album's tracks
 			if selected, ok := m.playlistList.SelectedItem().(playlistItem); ok {
-				logDebug(fmt.Sprintf("Playing playlist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
+				log.Debug(fmt.Sprintf("Playing playlist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s", selected.title)
 				return m, m.playPlaylistCmd(selected.ratingKey)
 			}
@@ -160,11 +161,11 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case playlistsFetchedMsg:
-		logDebug(fmt.Sprintf("playlistsFetchedMsg received with %d playlists, error: %v", len(msg.playlists), msg.err))
+		log.Debug(fmt.Sprintf("playlistsFetchedMsg received with %d playlists, error: %v", len(msg.playlists), msg.err))
 		if msg.err != nil {
 			errMsg := fmt.Sprintf("Error fetching playlists: %v", msg.err)
 			m.status = errMsg
-			logDebug(errMsg)
+			log.Debug(errMsg)
 			return m, nil
 		}
 
@@ -172,7 +173,7 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var items []list.Item
 		for i, playlist := range msg.playlists {
 			if i < 5 { // Only log first 5 playlists to avoid log spam
-				logDebug(fmt.Sprintf("Adding playlist %d: %s (ratingKey: %s)", i+1, playlist.Title, playlist.RatingKey))
+				log.Debug(fmt.Sprintf("Adding playlist %d: %s (ratingKey: %s)", i+1, playlist.Title, playlist.RatingKey))
 			}
 			items = append(items, playlistItem{
 				title:     playlist.Title,
@@ -180,7 +181,7 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 
-		logDebug(fmt.Sprintf("Creating new list with %d items", len(items)))
+		log.Debug(fmt.Sprintf("Creating new list with %d items", len(items)))
 		// Create a new list with the fetched items
 		// Preserve the current filter state
 		filterState := m.playlistList.FilterState()
@@ -200,7 +201,7 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playlistList.FilterInput.SetValue(filterValue)
 		}
 		m.status = fmt.Sprintf("Loaded %d playlists", len(msg.playlists))
-		logDebug(fmt.Sprintf("Updated model with new playlist list. List has %d items", m.playlistList.VisibleItems()))
+		log.Debug(fmt.Sprintf("Updated model with new playlist list. List has %d items", m.playlistList.VisibleItems()))
 
 		// Force a redraw
 		return m, tea.Batch(tea.ClearScreen, func() tea.Msg { return nil })

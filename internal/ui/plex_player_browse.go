@@ -1,7 +1,8 @@
-package main
+package ui
 
 import (
 	"fmt"
+	"plexamp-tui/internal/plex"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,7 +25,7 @@ type playerItem struct {
 
 // playersFetchedMsg is a message containing fetched players
 type playersFetchedMsg struct {
-	players []PlexConnectionSelection
+	players []plex.PlexConnectionSelection
 	err     error
 }
 
@@ -43,7 +44,7 @@ func (i playerItem) FilterValue() string {
 
 // fetchPlayersCmd fetches players from the Plex server
 func (m *model) fetchPlayersCmd() tea.Cmd {
-	logDebug("Fetching players...")
+	log.Debug("Fetching players...")
 	// ✅ Reapply sizing
 	footerHeight := 3 // or dynamically measure your footer
 	availableHeight := m.height - footerHeight - 5
@@ -54,7 +55,7 @@ func (m *model) fetchPlayersCmd() tea.Cmd {
 		}
 	}
 
-	token := getPlexToken()
+	token := plexClient.GetPlexToken()
 	if token == "" {
 		return func() tea.Msg {
 			return playersFetchedMsg{err: fmt.Errorf("no Plex token found - run with --auth flag")}
@@ -62,7 +63,7 @@ func (m *model) fetchPlayersCmd() tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		players, err := getPlexPlayers()
+		players, err := plexClient.GetPlexPlayers()
 		return playersFetchedMsg{players: players, err: err}
 	}
 }
@@ -107,7 +108,7 @@ func (m *model) selectPlayerCmd(player playerItem) tea.Cmd {
 }
 
 func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	logDebug(fmt.Sprintf("handlePlayerBrowseUpdate received message: %T", msg))
+	log.Debug(fmt.Sprintf("handlePlayerBrowseUpdate received message: %T", msg))
 
 	// If we're in filtering mode, let the list handle the input
 	if m.playerList.FilterState() == list.Filtering {
@@ -130,7 +131,7 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			// Select Server
 			if selected, ok := m.playerList.SelectedItem().(playerItem); ok {
-				logDebug(fmt.Sprintf("Selecting player: %s (clientIdentifier: %s)", selected.title, selected.clientIdentifier))
+				log.Debug(fmt.Sprintf("Selecting player: %s (clientIdentifier: %s)", selected.title, selected.clientIdentifier))
 				m.lastCommand = fmt.Sprintf("Selecting %s", selected.title)
 				return m, m.selectPlayerCmd(selected)
 			}
@@ -150,11 +151,11 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case playersFetchedMsg:
-		logDebug(fmt.Sprintf("playersFetchedMsg received with %d players, error: %v", len(msg.players), msg.err))
+		log.Debug(fmt.Sprintf("playersFetchedMsg received with %d players, error: %v", len(msg.players), msg.err))
 		if msg.err != nil {
 			errMsg := fmt.Sprintf("Error fetching players: %v", msg.err)
 			m.status = errMsg
-			logDebug(errMsg)
+			log.Debug(errMsg)
 			return m, nil
 		}
 
@@ -162,7 +163,7 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var items []list.Item
 		for i, player := range msg.players {
 			if i < 5 { // Only log first 5 servers to avoid log spam
-				logDebug(fmt.Sprintf("Adding player %d: %s (ratingKey: %s)", i+1, player.Name, player.ClientIdentifier))
+				log.Debug(fmt.Sprintf("Adding player %d: %s (ratingKey: %s)", i+1, player.Name, player.ClientIdentifier))
 			}
 			items = append(items, playerItem{
 				title:            player.Name,
@@ -173,7 +174,7 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 
-		logDebug(fmt.Sprintf("Creating new list with %d items", len(items)))
+		log.Debug(fmt.Sprintf("Creating new list with %d items", len(items)))
 		// Create a new list with the fetched items
 		// Preserve the current filter state
 		filterState := m.playerList.FilterState()
@@ -193,7 +194,7 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playerList.FilterInput.SetValue(filterValue)
 		}
 		m.status = fmt.Sprintf("Loaded %d players", len(msg.players))
-		logDebug(fmt.Sprintf("Updated model with new player list. List has %d items", m.playerList.VisibleItems()))
+		log.Debug(fmt.Sprintf("Updated model with new player list. List has %d items", m.playerList.VisibleItems()))
 
 		// Force a redraw
 		return m, tea.Batch(tea.ClearScreen, func() tea.Msg { return nil })
