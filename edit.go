@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
+
+	"plexamp-tui/internal/config"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -109,7 +109,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editFocusIndex = (m.editFocusIndex + 1) % 3 // We have 3 focusable elements now
 			m.updateFocus()
 			return m, nil
-			
+
 		case "shift+tab":
 			// Move focus to previous element
 			m.editFocusIndex--
@@ -137,7 +137,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			
+
 		// For all other keys, let the input handling below take care of it
 		default:
 			// No special handling needed here - let the input processing below handle it
@@ -145,7 +145,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	
+
 	// Handle input based on focus
 	switch m.editFocusIndex {
 	case 0: // Name input
@@ -157,7 +157,7 @@ func (m *model) handleEditUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case 2: // Metadata Key input
 		m.editInputs[1], cmd = m.editInputs[1].Update(msg)
 	}
-	
+
 	return m, cmd
 }
 
@@ -224,13 +224,11 @@ func (m *model) savePlaybackEdit() error {
 		return fmt.Errorf("metadata key cannot be empty")
 	}
 
-	// Load current config
-	cfgPath, err := favoritesConfigPath()
+	favsManager, err := config.NewFavoritesManager()
 	if err != nil {
 		return err
 	}
-
-	cfg, err := loadFavoritesConfig(cfgPath)
+	cfg, err := favsManager.Load()
 	if err != nil {
 		return err
 	}
@@ -238,7 +236,7 @@ func (m *model) savePlaybackEdit() error {
 	// Update or add the value
 	if m.editIndex == -1 {
 		// Adding new item
-		cfg.Items = append(cfg.Items, FavoriteItem{
+		cfg.Items = append(cfg.Items, config.FavoriteItem{
 			Name:        newName,
 			Type:        selectedType,
 			MetadataKey: newMetadataKey,
@@ -252,15 +250,7 @@ func (m *model) savePlaybackEdit() error {
 		return fmt.Errorf("invalid index")
 	}
 
-	// Save to file
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
-		return err
-	}
+	favsManager.Save(cfg)
 
 	// Update the list
 	var items []list.Item
@@ -289,7 +279,7 @@ func (m model) editPanelView() string {
 		// Title
 		titleStyle := lipgloss.NewStyle().Bold(true).Underline(true)
 		content += titleStyle.Render(fmt.Sprintf("%s Playback Item", action)) + "\n\n"
-		
+
 		// Name input
 		nameLabel := "Name:"
 		if m.editFocusIndex == 0 {
@@ -299,33 +289,33 @@ func (m model) editPanelView() string {
 		if len(m.editInputs) > 0 {
 			content += m.editInputs[0].View() + "\n\n"
 		}
-		
+
 		// Type selection
 		typeLabel := "Type:"
 		if m.editFocusIndex == 1 {
 			typeLabel = "→ " + typeLabel
 		}
 		content += typeLabel + "\n"
-		
+
 		// Custom type selection display
 		typeOptions := []string{"Artist", "Album", "Playlist", "Station"}
 		typeContent := ""
 		for i, option := range typeOptions {
 			itemStyle := lipgloss.NewStyle().PaddingLeft(2)
 			isSelected := i == m.typeSelect.Index()
-			
+
 			// Always show selected item with blue highlight
 			if isSelected {
 				itemStyle = itemStyle.Background(lipgloss.Color("62")).Bold(true)
 			}
-			
+
 			if i > 0 {
 				typeContent += " "
 			}
 			typeContent += itemStyle.Render(option)
 		}
 		content += typeContent + "\n\n"
-		
+
 		// Metadata key input
 		metadataLabel := "Metadata Key:"
 		if m.editFocusIndex == 2 {
@@ -357,19 +347,7 @@ func (m *model) deletePlaybackItem(index int) error {
 	m.playbackList.SetItems(items)
 
 	// Save to file
-	data, err := json.MarshalIndent(m.playbackConfig, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	cfgPath, err := favoritesConfigPath()
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(cfgPath, data, 0644); err != nil {
-		return err
-	}
+	favsManager.Save(m.playbackConfig)
 
 	return nil
 }

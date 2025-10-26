@@ -1,19 +1,20 @@
 package main
 
 import (
-	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+
+	"plexamp-tui/internal/config"
+	"plexamp-tui/internal/logger"
+	"plexamp-tui/internal/plex"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -21,62 +22,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// =====================
-// Config management
-// =====================
-
-type Config struct {
-	ServerID           string        `json:"server_id"`            // Plex server ID for building playback URLs
-	PlexServerAddr     string        `json:"plex_server_addr"`     // Plex server address for API calls (e.g., "jakku.lan:32400")
-	PlexServerName     string        `json:"plex_server_name"`     // Plex server name for displayj
-	PlexLibraryID      string        `json:"plex_library_id"`      // Music library ID for browsing
-	SelectedPlayer     string        `json:"selected_player"`      // Selected player for playback
-	SelectedPlayerName string        `json:"selected_player_name"` // Selected player name for display
-	PlexLibraryName    string        `json:"plex_library_name"`    // Music library name for display
-	PlexLibraries      []PlexLibrary `json:"plex_libraries"`       // List of Plex libraries
-}
-
-func loadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, os.ErrNotExist
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-
-	logDebug(fmt.Sprintf("Loaded config: %v", cfg))
-	return &cfg, nil
-}
-
-func saveDefaultConfig(path string) error {
-	os.MkdirAll(filepath.Dir(path), 0755)
-
-	defaultCfg := Config{
-		ServerID:           "SELECT_SERVER",
-		PlexServerAddr:     "127.0.0.1:32400",
-		PlexServerName:     "SELECT_SERVER",
-		PlexLibraryID:      "15",
-		SelectedPlayer:     "127.0.0.1",
-		SelectedPlayerName: "SELECT_PLAYER",
-		PlexLibraryName:    "SELECT_LIBRARY",
-		PlexLibraries: []PlexLibrary{
-			{
-				Key:   "15",
-				Title: "SELECT_LIBRARY",
-				Type:  "artist",
-			},
-		},
-	}
-
-	data, _ := json.MarshalIndent(defaultCfg, "", "  ")
-	return os.WriteFile(path, data, 0644)
-}
+// Replace the Config struct and related functions with:
+var (
+	log         *logger.Logger
+	cfgManager  *config.Manager
+	favsManager *config.FavoritesManager
+	plexClient  *plex.PlexClient
+)
 
 // =====================
 // TUI Types
@@ -113,8 +65,8 @@ type model struct {
 
 	// Panel mode: "servers", "playback", "edit", "plex-servers", "plex-libraries", "plex-artists", "plex-albums"
 	panelMode      string
-	playbackConfig *Favorites
-	config         *Config // Store config for server ID access
+	playbackConfig *config.Favorites
+	config         *config.Config // Store config for server ID access
 
 	// Edit mode fields
 	editMode       string // "server" or "playback"
@@ -170,17 +122,27 @@ var debugMode bool
 
 func main() {
 	// CLI flags
+	var debug bool
 	configFlag := flag.String("config", "", "Path to configuration file (optional)")
-	debugFlag := flag.Bool("debug", false, "Enable debug logging")
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	authFlag := flag.Bool("auth", false, "Authenticate with Plex.tv")
 	flag.Parse()
 
-	debugMode = *debugFlag
+	// Initialize logger
+	_log, err := logger.NewLogger(debug, "")
+	log = _log
+	if err != nil {
+		fmt.Println("Error initializing logger:", err)
+		os.Exit(1)
+	}
+	defer log.Close()
+
+	plexClient = plex.NewPlexClient(log)
 
 	// Handle Plex authentication
 	if *authFlag {
 		fmt.Println("Starting Plex authentication...")
-		_, err := authenticateWithPlex()
+		_, err := plexClient.AuthenticateWithPlex()
 		if err != nil {
 			fmt.Printf("Authentication failed: %v\n", err)
 			os.Exit(1)
@@ -189,56 +151,33 @@ func main() {
 		return
 	}
 
-	var cfg *Config
-	var cfgPath string
-	var err error
-
-	if *configFlag != "" {
-		cfgPath = *configFlag
-	} else {
-		cfgPath, err = getConfigPath()
-		if err != nil {
-			fmt.Println("Error determining config path:", err)
-			os.Exit(1)
-		}
-	}
-
-	cfg, err = loadConfig(cfgPath)
-	usingDefault := false
+	// Initialize config
+	// cfgPath := filepath.Join(getConfigDir(), "config.json")
+	cfgManager, err = config.NewManager(*configFlag)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Printf("No config found, creating default one at %s\n", cfgPath)
-			if err := saveDefaultConfig(cfgPath); err != nil {
-				fmt.Println("Error creating default config:", err)
-				os.Exit(1)
-			}
-			cfg, err = loadConfig(cfgPath)
-			if err != nil {
-				fmt.Println("Error reloading config:", err)
-				os.Exit(1)
-			}
-			usingDefault = true
-		} else {
-			fmt.Println("Error loading config:", err)
-			os.Exit(1)
-		}
+		log.Fatal("Failed to initialize config manager: %v", err)
 	}
 
-	// Load playback config
-	playbackCfgPath, _ := favoritesConfigPath()
-	playbackCfg, err := loadFavoritesConfig(playbackCfgPath)
-	if err != nil && os.IsNotExist(err) {
-		fmt.Printf("No playback config found, creating default one at %s\n", playbackCfgPath)
-		if err := saveDefaultFavoritesConfig(playbackCfgPath); err != nil {
-			fmt.Println("Warning: Could not create default playback config:", err)
-		}
-		playbackCfg, _ = loadFavoritesConfig(playbackCfgPath)
+	cfg, err := cfgManager.Load()
+	if err != nil {
+		log.Fatal("Failed to load config: %v", err)
+	}
+
+	favsManager, err = config.NewFavoritesManager()
+	if err != nil {
+		log.Fatal("Failed to initialize favorites manager: %v", err)
+	}
+
+	// Load favorites
+	favs, err := favsManager.Load()
+	if err != nil {
+		log.Fatal("Failed to load favorites: %v", err)
 	}
 
 	// Create playback list
 	var playbackItems []list.Item
-	if playbackCfg != nil {
-		for _, pb := range playbackCfg.Items {
+	if favs != nil {
+		for _, pb := range favs.Items {
 			playbackItems = append(playbackItems, item(pb.Name))
 		}
 	}
@@ -288,12 +227,12 @@ func main() {
 		serverList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		playerList:        list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		selected:          cfg.SelectedPlayer,
-		usingDefaultCfg:   usingDefault,
-		playbackConfig:    playbackCfg,
+		usingDefaultCfg:   cfgManager.UsingDefault,
+		playbackConfig:    favs,
 		config:            cfg,
 		panelMode:         "playback",
 		shuffle:           true, // Default shuffle to ON
-		plexAuthenticated: verifyPlexAuthentication(),
+		plexAuthenticated: plexClient.VerifyPlexAuthentication(),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -301,12 +240,12 @@ func main() {
 		fmt.Println("Error:", err)
 	}
 
-	serverInfo, err := GetPlexServerInformation()
+	serverInfo, err := plexClient.GetPlexServerInformation()
 	if err != nil {
-		logDebug(fmt.Sprintf("Error getting server information: %v", err))
+		log.Debug(fmt.Sprintf("Error getting server information: %v", err))
 		os.Exit(1)
 	}
-	logDebug(fmt.Sprintf("Server information: %v", serverInfo))
+	log.Debug(fmt.Sprintf("Server information: %v", serverInfo))
 }
 
 // =====================
@@ -334,7 +273,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.config.SelectedPlayer = msg.player.address
 			m.config.SelectedPlayerName = msg.player.title
 			m.selected = msg.player.address
-			m.saveServerConfig()
+			cfgManager.Save(m.config)
 			m.lastCommand = "Player Selected"
 			m.status = ""
 			m.panelMode = "playback" // Return to playback view after selection
@@ -354,7 +293,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			found := false
 			if len(msg.libraries) == 0 {
-				logDebug("No libraries found on this server")
+				log.Debug("No libraries found on this server")
 				m.panelMode = "playback"
 				m.lastCommand = "Server Selected Failed, No Libraries"
 				m.status = "No libraries found on this server"
@@ -370,13 +309,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if !found {
-				logDebug("Current Library not found on this server, using first library")
+				log.Debug("Current Library not found on this server, using first library")
 				m.config.PlexLibraryName = msg.libraries[0].Title
 				m.config.PlexLibraryID = msg.libraries[0].Key
 			}
 
-			logDebug(fmt.Sprintf("Saving server config: %v", m.config))
-			m.saveServerConfig()
+			log.Debug(fmt.Sprintf("Saving server config: %v", m.config))
+			cfgManager.Save(m.config)
 			m.lastCommand = "Server Selected"
 			m.status = ""
 			m.panelMode = "playback" // Return to playback view after selection
@@ -936,7 +875,7 @@ func (m *model) cycleLibrary() tea.Cmd {
 				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
 				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
 			}
-			m.saveServerConfig()
+			cfgManager.Save(m.config)
 			// Return a command that will refresh the current panel
 			return m.refreshCurrentPanel()
 		}

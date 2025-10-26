@@ -1,4 +1,4 @@
-package main
+package plex
 
 import (
 	"encoding/json"
@@ -17,12 +17,12 @@ import (
 // =====================
 
 const (
-	PlexAPIURL     = "https://plex.tv/api/v2"
-	PlexClientID   = "plexamp-tui-" // Will be appended with a unique identifier
-	PlexProduct    = "Plexamp TUI"
-	PlexVersion    = "1.0.0"
-	PlexPlatform   = "Linux"
-	PlexDevice     = "Terminal"
+	PlexAPIURL   = "https://plex.tv/api/v2"
+	PlexClientID = "plexamp-tui-" // Will be appended with a unique identifier
+	PlexProduct  = "Plexamp TUI"
+	PlexVersion  = "1.0.0"
+	PlexPlatform = "Linux"
+	PlexDevice   = "Terminal"
 )
 
 // PlexAuthConfig stores the Plex authentication token
@@ -34,12 +34,12 @@ type PlexAuthConfig struct {
 
 // PlexPinResponse represents the PIN response from Plex
 type PlexPinResponse struct {
-	ID         int    `json:"id"`
-	Code       string `json:"code"`
-	Product    string `json:"product"`
-	Trusted    bool   `json:"trusted"`
-	ClientID   string `json:"clientIdentifier"`
-	Location   struct {
+	ID       int    `json:"id"`
+	Code     string `json:"code"`
+	Product  string `json:"product"`
+	Trusted  bool   `json:"trusted"`
+	ClientID string `json:"clientIdentifier"`
+	Location struct {
 		Code string `json:"code"`
 	} `json:"location"`
 	ExpiresIn int       `json:"expiresIn"`
@@ -247,8 +247,8 @@ func getPlexUser(token string) (*PlexUser, error) {
 	return &user, nil
 }
 
-// authenticateWithPlex performs the full Plex authentication flow
-func authenticateWithPlex() (*PlexAuthConfig, error) {
+// AuthenticateWithPlex performs the full Plex authentication flow
+func (p *PlexClient) AuthenticateWithPlex() (*PlexAuthConfig, error) {
 	// Request a PIN
 	pin, err := requestPlexPIN()
 	if err != nil {
@@ -322,8 +322,8 @@ func isPlexAuthenticated() bool {
 	return true
 }
 
-// getPlexToken returns the stored Plex token, or empty string if not authenticated
-func getPlexToken() string {
+// GetPlexToken returns the stored Plex token, or empty string if not authenticated
+func (p *PlexClient) GetPlexToken() string {
 	config, err := loadPlexAuthConfig()
 	if err != nil || config == nil {
 		return ""
@@ -331,9 +331,9 @@ func getPlexToken() string {
 	return config.Token
 }
 
-// verifyPlexAuthentication checks if the stored token is valid by making a test API call
-func verifyPlexAuthentication() bool {
-	token := getPlexToken()
+// VerifyPlexAuthentication checks if the stored token is valid by making a test API call
+func (p *PlexClient) VerifyPlexAuthentication() bool {
+	token := p.GetPlexToken()
 	if token == "" {
 		return false
 	}
