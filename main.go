@@ -128,9 +128,21 @@ func main() {
 	authFlag := flag.Bool("auth", false, "Authenticate with Plex.tv")
 	flag.Parse()
 
+	// Initialize config
+	// cfgPath := filepath.Join(getConfigDir(), "config.json")
+	var err error
+	cfgManager, err = config.NewManager(*configFlag)
+	if err != nil {
+		log.Fatal("Failed to initialize config manager: %v", err)
+	}
+
+	cfg, err := cfgManager.Load()
+	if err != nil {
+		log.Fatal("Failed to load config: %v", err)
+	}
+
 	// Initialize logger
-	_log, err := logger.NewLogger(debug, "")
-	log = _log
+	log, err = logger.NewLogger(debug, cfgManager.GetLogPath())
 	if err != nil {
 		fmt.Println("Error initializing logger:", err)
 		os.Exit(1)
@@ -149,18 +161,6 @@ func main() {
 		}
 		fmt.Println("\nAuthentication complete! You can now run plexamp-tui normally.")
 		return
-	}
-
-	// Initialize config
-	// cfgPath := filepath.Join(getConfigDir(), "config.json")
-	cfgManager, err = config.NewManager(*configFlag)
-	if err != nil {
-		log.Fatal("Failed to initialize config manager: %v", err)
-	}
-
-	cfg, err := cfgManager.Load()
-	if err != nil {
-		log.Fatal("Failed to load config: %v", err)
 	}
 
 	favsManager, err = config.NewFavoritesManager()

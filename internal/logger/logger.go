@@ -47,19 +47,19 @@ func NewLogger(debug bool, logFilePath string) (*Logger, error) {
 		}
 	}
 
-	// Create multi-writer that writes to both file and stdout
-	var writers []io.Writer
+	// Only create a logger if we have a log file
+	var logger *log.Logger
 	if logFile != nil {
-		writers = append(writers, logFile)
+		logger = log.New(logFile, "", log.LstdFlags|log.Lmsgprefix)
+	} else {
+		// If no log file, use a no-op logger
+		logger = log.New(io.Discard, "", 0)
 	}
-	writers = append(writers, os.Stdout)
-
-	multiWriter := io.MultiWriter(writers...)
 
 	return &Logger{
 		debugMode: debug,
 		logFile:   logFile,
-		logger:    log.New(multiWriter, "", log.LstdFlags|log.Lmsgprefix),
+		logger:    logger,
 	}, nil
 }
 

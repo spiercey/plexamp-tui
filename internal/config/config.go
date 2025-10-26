@@ -130,3 +130,8 @@ func getDefaultConfigPath() (string, error) {
 	}
 	return filepath.Join(base, "plexamp-tui", "config.json"), nil
 }
+
+// GetLogPath returns the path to the log file
+func (m *Manager) GetLogPath() string {
+	return filepath.Join(filepath.Dir(m.configPath), "plexamp-tui.log")
+}
