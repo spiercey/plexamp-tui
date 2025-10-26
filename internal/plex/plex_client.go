@@ -1,5 +1,3 @@
-//plex clint wrapper created with a logger to make it easier to debug
-
 package plex
 
 import (
