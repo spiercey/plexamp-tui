@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+
 	"plexamp-tui/internal/plex"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -130,6 +133,30 @@ func (m *model) initArtistBrowse() {
 	m.artistList.Styles.Title = titleStyle
 	m.artistList.Styles.PaginationStyle = paginationStyle
 	m.artistList.Styles.HelpStyle = helpStyle
+	m.artistList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "favs"),
+			),
+		}
+	}
+	m.artistList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "Add/Remove from Favorites"),
+			),
+			key.NewBinding(
+				key.WithKeys("r"),
+				key.WithHelp("r", "Play Radio"),
+			),
+			key.NewBinding(
+				key.WithKeys("R"),
+				key.WithHelp("R", "Refresh Artists"),
+			),
+		}
+	}
 
 	if m.width > 0 && m.height > 0 {
 		m.artistList.SetSize(m.width/2-4, m.height-4)
@@ -169,6 +196,18 @@ func (m *model) handleArtistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "f":
+			// add or remove selected artist from favorites (playback list)
+			if selected, ok := m.artistList.SelectedItem().(artistItem); ok {
+				log.Debug(fmt.Sprintf("Toggling favorite for artist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
+				m.lastCommand = fmt.Sprintf("Toggling favorite for %s", selected.title)
+				_, cmd := m.addRemoveFavorite(selected.title, selected.ratingKey, "artist")
+				selected.ToggleFavorite()
+				// Update the item in the list
+				m.artistList.SetItem(m.artistList.Index(), selected)
+				return m, cmd
+			}
+
 		case "r": // Shift+R for artist radio
 			// Play selected artist's radio station
 			if selected, ok := m.artistList.SelectedItem().(artistItem); ok {
@@ -200,14 +239,29 @@ func (m *model) handleArtistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		favSet := make(map[string]struct{})
+		for _, pItem := range m.playbackList.Items() {
+			pItem := pItem.(item)
+			favSet[pItem.GetMetadataKey()] = struct{}{}
+		}
+
 		// Convert artists to list items
 		var items []list.Item
 		for i, artist := range msg.artists {
 			if i < 5 { // Only log first 5 artists to avoid log spam
 				log.Debug(fmt.Sprintf("Adding artist %d: %s (ratingKey: %s)", i+1, artist.Title, artist.RatingKey))
 			}
+
+			fav := false
+			if _, exists := favSet[artist.RatingKey]; exists {
+				fav = true
+			}
+			title := artist.Title
+			if fav {
+				title = fmt.Sprintf("%s ★", artist.Title)
+			}
 			items = append(items, artistItem{
-				title:     artist.Title,
+				title:     title,
 				ratingKey: artist.RatingKey,
 			})
 		}
@@ -271,6 +325,15 @@ func (i artistItem) Description() string { return "" } // No description needed
 func (i artistItem) FilterValue() string {
 	// Return the title in lowercase for case-insensitive matching
 	return i.title
+}
+
+func (a *artistItem) ToggleFavorite() {
+	// If title already has a star, remove it
+	if strings.HasSuffix(a.title, " ★") {
+		a.title = strings.TrimSuffix(a.title, " ★")
+	} else {
+		a.title = fmt.Sprintf("%s ★", a.title)
+	}
 }
 
 // Custom styles for the list

@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+
 	"plexamp-tui/internal/plex"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -29,6 +32,9 @@ type playlistsFetchedMsg struct {
 
 // Title returns the playlist title
 func (i playlistItem) Title() string {
+	if strings.HasSuffix(i.title, " ★") {
+		return fmt.Sprintf("%s - %s (%s) ★", strings.TrimSuffix(i.title, " ★"), i.artist, i.year)
+	}
 	return fmt.Sprintf("%s - %s (%s)", i.title, i.artist, i.year)
 }
 
@@ -38,6 +44,15 @@ func (i playlistItem) Description() string { return "" }
 // FilterValue implements list.Item
 func (i playlistItem) FilterValue() string {
 	return i.title + " " + i.artist
+}
+
+func (p *playlistItem) ToggleFavorite() {
+	// If title already has a star, remove it
+	if strings.HasSuffix(p.title, " ★") {
+		p.title = strings.TrimSuffix(p.title, " ★")
+	} else {
+		p.title = fmt.Sprintf("%s ★", p.title)
+	}
 }
 
 // fetchPlaylistsCmd fetches playlists from the Plex server
@@ -87,10 +102,32 @@ func (m *model) initPlaylistBrowse() {
 	m.playlistList.Styles.Title = titleStyle
 	m.playlistList.Styles.PaginationStyle = paginationStyle
 	m.playlistList.Styles.HelpStyle = helpStyle
+
+	m.playlistList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "favs"),
+			),
+		}
+	}
+	m.playlistList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "Add/Remove from Favorites"),
+			),
+			key.NewBinding(
+				key.WithKeys("R"),
+				key.WithHelp("R", "Refresh Playlists"),
+			),
+		}
+	}
 	if m.width > 0 && m.height > 0 {
 		m.playlistList.SetSize(m.width/2-4, m.height-4)
 	}
 }
+
 func (m *model) playPlaylistCmd(ratingKey string) tea.Cmd {
 	if m.selected == "" {
 		return func() tea.Msg {
@@ -147,6 +184,18 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "f":
+			// add or remove selected artist from favorites (playback list)
+			if selected, ok := m.playlistList.SelectedItem().(playlistItem); ok {
+				log.Debug(fmt.Sprintf("Toggling favorite for playlist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
+				m.lastCommand = fmt.Sprintf("Toggling favorite for %s", selected.title)
+				_, cmd := m.addRemoveFavorite(selected.title, selected.ratingKey, "playlist")
+				selected.ToggleFavorite()
+				// Update the item in the list
+				m.playlistList.SetItem(m.playlistList.Index(), selected)
+				return m, cmd
+			}
+
 		case "R":
 			// Refresh album list
 			m.status = "Refreshing albums..."
@@ -169,14 +218,30 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		favSet := make(map[string]struct{})
+		for _, pItem := range m.playbackList.Items() {
+			pItem := pItem.(item)
+			favSet[pItem.GetMetadataKey()] = struct{}{}
+		}
+
 		// Convert playlists to list items
 		var items []list.Item
 		for i, playlist := range msg.playlists {
 			if i < 5 { // Only log first 5 playlists to avoid log spam
 				log.Debug(fmt.Sprintf("Adding playlist %d: %s (ratingKey: %s)", i+1, playlist.Title, playlist.RatingKey))
 			}
+
+			fav := false
+			if _, exists := favSet[playlist.RatingKey]; exists {
+				fav = true
+			}
+			title := playlist.Title
+			if fav {
+				title = fmt.Sprintf("%s ★", playlist.Title)
+			}
+
 			items = append(items, playlistItem{
-				title:     playlist.Title,
+				title:     title,
 				ratingKey: playlist.RatingKey,
 			})
 		}

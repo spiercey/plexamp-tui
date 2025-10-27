@@ -47,7 +47,6 @@ func (m *model) initEditMode(editType string, index int) {
 			typeItem("Artist"),
 			typeItem("Album"),
 			typeItem("Playlist"),
-			typeItem("Station"),
 		}
 
 		// Initialize the list with default settings
@@ -65,8 +64,6 @@ func (m *model) initEditMode(editType string, index int) {
 				typeSelect.Select(1)
 			case "playlist":
 				typeSelect.Select(2)
-			case "station":
-				typeSelect.Select(3)
 			}
 		}
 
@@ -209,8 +206,6 @@ func (m *model) savePlaybackEdit() error {
 			selectedType = "album"
 		case "Playlist":
 			selectedType = "playlist"
-		case "Station":
-			selectedType = "station"
 		}
 	}
 
@@ -255,7 +250,7 @@ func (m *model) savePlaybackEdit() error {
 	// Update the list
 	var items []list.Item
 	for _, pb := range cfg.Items {
-		items = append(items, item(pb.Name))
+		items = append(items, item{pb.Name, pb.Type, pb.MetadataKey})
 	}
 	m.playbackList.SetItems(items)
 	m.playbackConfig = cfg
@@ -298,7 +293,7 @@ func (m model) editPanelView() string {
 		content += typeLabel + "\n"
 
 		// Custom type selection display
-		typeOptions := []string{"Artist", "Album", "Playlist", "Station"}
+		typeOptions := []string{"Artist", "Album", "Playlist"}
 		typeContent := ""
 		for i, option := range typeOptions {
 			itemStyle := lipgloss.NewStyle().PaddingLeft(2)
@@ -342,12 +337,19 @@ func (m *model) deletePlaybackItem(index int) error {
 	// Update the list
 	var items []list.Item
 	for _, pb := range m.playbackConfig.Items {
-		items = append(items, item(pb.Name))
+		items = append(items, item{Name: pb.Name, Type: pb.Type, MetadataKey: pb.MetadataKey})
 	}
 	m.playbackList.SetItems(items)
 
 	// Save to file
 	favsManager.Save(m.playbackConfig)
 
+	return nil
+}
+
+func (m *model) savePlaybackItem(name string, k string, t string) error {
+	m.playbackConfig.Items = append(m.playbackConfig.Items, config.FavoriteItem{Name: name, MetadataKey: k, Type: t})
+	m.playbackList.SetItems(append(m.playbackList.Items(), item{Name: name, MetadataKey: k, Type: t}))
+	favsManager.Save(m.playbackConfig)
 	return nil
 }

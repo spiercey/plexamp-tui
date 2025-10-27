@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+
 	"plexamp-tui/internal/plex"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -23,6 +26,9 @@ type albumItem struct {
 
 // Title returns the album title
 func (i albumItem) Title() string {
+	if strings.HasSuffix(i.title, " ★") {
+		return fmt.Sprintf("%s - %s (%s) ★", strings.TrimSuffix(i.title, " ★"), i.artist, i.year)
+	}
 	return fmt.Sprintf("%s - %s (%s)", i.title, i.artist, i.year)
 }
 
@@ -32,6 +38,15 @@ func (i albumItem) Description() string { return "" }
 // FilterValue implements list.Item
 func (i albumItem) FilterValue() string {
 	return i.title + " " + i.artist
+}
+
+func (a *albumItem) ToggleFavorite() {
+	// If title already has a star, remove it
+	if strings.HasSuffix(a.title, " ★") {
+		a.title = strings.TrimSuffix(a.title, " ★")
+	} else {
+		a.title = fmt.Sprintf("%s ★", a.title)
+	}
 }
 
 // fetchAlbumsCmd fetches albums from the Plex server
@@ -82,10 +97,31 @@ func (m *model) initAlbumBrowse() {
 	m.albumList.Styles.Title = titleStyle
 	m.albumList.Styles.PaginationStyle = paginationStyle
 	m.albumList.Styles.HelpStyle = helpStyle
+	m.albumList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "favs"),
+			),
+		}
+	}
+	m.albumList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "Add/Remove from Favorites"),
+			),
+			key.NewBinding(
+				key.WithKeys("R"),
+				key.WithHelp("R", "Refresh Albums"),
+			),
+		}
+	}
 	if m.width > 0 && m.height > 0 {
 		m.albumList.SetSize(m.width/2-4, m.height-4)
 	}
 }
+
 func (m *model) playAlbumCmd(ratingKey string) tea.Cmd {
 	if m.selected == "" {
 		return func() tea.Msg {
@@ -133,6 +169,21 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ""
 			return m, nil
 
+		case "f":
+			// add or remove selected artist from favorites (playback list)
+			if selected, ok := m.albumList.SelectedItem().(albumItem); ok {
+				log.Debug(fmt.Sprintf("Toggling favorite for album: %s (ratingKey: %s)", selected.title, selected.ratingKey))
+				m.lastCommand = fmt.Sprintf("Toggling favorite for %s", selected.title)
+
+				_, cmd := m.addRemoveFavorite(selected.title, selected.ratingKey, "album")
+				selected.ToggleFavorite()
+
+				// Update the item in the list
+				m.albumList.SetItem(m.albumList.Index(), selected)
+
+				return m, cmd
+			}
+
 		case "enter":
 			// Play selected album's tracks
 			if selected, ok := m.albumList.SelectedItem().(albumItem); ok {
@@ -145,6 +196,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "R":
 			// Refresh album list
 			m.status = "Refreshing albums..."
+			m.lastCommand = "Refreshing album list"
 			return m, m.fetchAlbumsCmd()
 
 		default:
@@ -164,14 +216,29 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		favSet := make(map[string]struct{})
+		for _, pItem := range m.playbackList.Items() {
+			pItem := pItem.(item)
+			favSet[pItem.GetMetadataKey()] = struct{}{}
+		}
 		// Convert albums to list items
 		var items []list.Item
 		for i, album := range msg.albums {
 			if i < 5 { // Only log first 5 albums to avoid log spam
 				log.Debug(fmt.Sprintf("Adding album %d: %s (ratingKey: %s)", i+1, album.Title, album.RatingKey))
 			}
+
+			fav := false
+			if _, exists := favSet[album.RatingKey]; exists {
+				fav = true
+			}
+			title := album.Title
+			if fav {
+				title = fmt.Sprintf("%s ★", album.Title)
+			}
+
 			items = append(items, albumItem{
-				title:     album.Title,
+				title:     title,
 				artist:    album.ParentTitle,
 				year:      album.Year,
 				ratingKey: album.RatingKey,

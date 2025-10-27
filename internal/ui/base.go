@@ -1,3 +1,4 @@
+// Package ui contains the main TUI model and Bubble Tea implementation for Plexamp control.
 package ui
 
 import (
@@ -5,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
+
 	"plexamp-tui/internal/config"
 	"plexamp-tui/internal/logger"
 	"plexamp-tui/internal/plex"
-	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -22,11 +23,16 @@ import (
 // TUI Types
 // =====================
 
-type item string
+type item struct {
+	Name        string
+	Type        string
+	MetadataKey string
+}
 
-func (i item) Title() string       { return string(i) }
-func (i item) Description() string { return "" }
-func (i item) FilterValue() string { return string(i) }
+func (i item) Title() string          { return string(i.Name) }
+func (i item) Description() string    { return string(i.Type) }
+func (i item) FilterValue() string    { return string(i.Name) }
+func (i item) GetMetadataKey() string { return i.MetadataKey }
 
 type model struct {
 	playbackList      list.Model
@@ -83,9 +89,11 @@ type Track struct {
 	GrandparentTitle string `xml:"grandparentTitle,attr"`
 }
 
-type trackMsg string
-type errMsg struct{ err error }
-type pollMsg struct{}
+type (
+	trackMsg string
+	errMsg   struct{ err error }
+	pollMsg  struct{}
+)
 
 type trackMsgWithState struct {
 	TrackText string
@@ -105,15 +113,18 @@ type UiManager struct {
 	Model model
 }
 
-var cfg *config.Config
-var favs *config.Favorites
-var plexClient *plex.PlexClient
-var cfgManager *config.Manager
-var log *logger.Logger
-var favsManager *config.FavoritesManager
+var (
+	cfg         *config.Config
+	favs        *config.Favorites
+	plexClient  *plex.PlexClient
+	cfgManager  *config.Manager
+	log         *logger.Logger
+	favsManager *config.FavoritesManager
+)
 
 func NewUiManager(logger *logger.Logger, config *config.Config, manager *config.Manager,
-	favorites *config.Favorites, client *plex.PlexClient, favoritesMgr *config.FavoritesManager) *UiManager {
+	favorites *config.Favorites, client *plex.PlexClient, favoritesMgr *config.FavoritesManager,
+) *UiManager {
 	log = logger
 	cfg = config
 	cfgManager = manager
@@ -125,7 +136,7 @@ func NewUiManager(logger *logger.Logger, config *config.Config, manager *config.
 	var playbackItems []list.Item
 	if favs != nil {
 		for _, pb := range favs.Items {
-			playbackItems = append(playbackItems, item(pb.Name))
+			playbackItems = append(playbackItems, item{Name: pb.Name, Type: pb.Type, MetadataKey: pb.MetadataKey})
 		}
 	}
 	playbackList := list.New(playbackItems, list.NewDefaultDelegate(), 0, 0)
@@ -239,7 +250,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			//check if new library list has our configured library
+			// check if new library list has our configured library
 			for _, lib := range msg.libraries {
 				if lib.Title == m.config.PlexLibraryName {
 					found = true
@@ -359,7 +370,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		// Handle playback selection (when in playback mode)
+		// Handle playback selection (when in playback/favorites mode)
 		if m.panelMode == "playback" {
 			// Check if we're in filtering mode for the playback list
 			if m.playbackList.FilterState() == list.Filtering {
@@ -386,12 +397,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.deletePlaybackItem(index)
 				return m, nil
 
+			case "r":
+				// play station/radio if selection is an artist
+				if selected, ok := m.playbackList.SelectedItem().(item); ok {
+					for _, pb := range m.playbackConfig.Items {
+						if pb.Name == string(selected.Name) && pb.Type == "artist" {
+							return m, m.triggerFavoriteRadioPlayback(pb)
+						}
+					}
+				}
+
 			case "enter":
 				// Select playback item - don't switch back to servers
 				if selected, ok := m.playbackList.SelectedItem().(item); ok {
 					// Find the matching playback config item
 					for _, pb := range m.playbackConfig.Items {
-						if pb.Name == string(selected) {
+						if pb.Name == string(selected.Name) {
 							return m, m.triggerFavoritePlayback(pb)
 						}
 					}
@@ -583,243 +604,12 @@ func (m model) View() string {
 	)
 }
 
-// footerView renders the application footer
-func (m model) footerView() string {
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffaa00"))
-	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
-	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#8888ff"))
-	footerStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderTop(true).
-		BorderForeground(lipgloss.Color("#00ffff")).
-		Padding(0, 1)
-
-	var shuffleValue string
-	if m.shuffle {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ff00")).Bold(true).Render("ON")
-	} else {
-		shuffleValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render("OFF")
-	}
-	// --- Left side (your existing info)
-	left := ""
-	left += fmt.Sprintf("%s %s: %s \n", header.Render("Shuffle"), info.Render("(h)"), shuffleValue)
-	if len(m.config.PlexLibraries) > 0 {
-		left += fmt.Sprintf("%s %s: ", header.Render("Library"), info.Render("(Tab)"))
-		for _, library := range m.config.PlexLibraries {
-			if library.Key == m.config.PlexLibraryID {
-				left += fmt.Sprintf("%s | ", value.Render(library.Title))
-			} else {
-				left += fmt.Sprintf("%s | ", library.Title)
-			}
-		}
-		left = strings.TrimSuffix(left, "| ")
-		left += "\n"
-	}
-
-	left += fmt.Sprintf("%s %s: %s | ", header.Render("Server"), info.Render("(6)"), value.Render(m.config.PlexServerName))
-	left += fmt.Sprintf("%s %s: %s", header.Render("Player"), info.Render("(7)"), value.Render(m.config.SelectedPlayerName))
-
-	// --- Right side (new)
-	// Example: replace with whatever info you want (track, status, etc.)
-	var right string
-	if m.plexAuthenticated {
-		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✓"))
-	} else {
-		right = fmt.Sprintf("%s: %s ", header.Render("Authenticated"), value.Render("✗"))
-	}
-
-	right += fmt.Sprintf("\n%s: %s ", header.Render("Last Command"), value.Render(m.lastCommand))
-
-	// --- Combine left and right
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
-
-	var combinedLines []string
-	maxLines := max(len(leftLines), len(rightLines))
-
-	for i := 0; i < maxLines; i++ {
-		var l, r string
-		if i < len(leftLines) {
-			l = leftLines[i]
-		}
-		if i < len(rightLines) {
-			r = rightLines[i]
-		}
-
-		padding := m.width - lipgloss.Width(l) - lipgloss.Width(r) - 4 // adjust for borders/padding
-		if padding < 1 {
-			padding = 1
-		}
-		line := l + strings.Repeat(" ", padding) + r
-		combinedLines = append(combinedLines, line)
-	}
-
-	return footerStyle.Width(m.width - 2).Render(strings.Join(combinedLines, "\n"))
-}
-
 // helper
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
-}
-
-func (m model) playbackStatusView() string {
-	info := lipgloss.NewStyle().Foreground(lipgloss.Color("#aaaaaa"))
-	value := lipgloss.NewStyle().Foreground(lipgloss.Color("#00ffcc")).Bold(true)
-
-	state := "⏸️ Paused"
-	if m.isPlaying {
-		state = "▶️ Playing"
-	}
-
-	current := "None"
-	if m.currentTrack != "" {
-		current = m.currentTrack
-	}
-
-	elapsed := m.currentPosition()
-	progress := formatTime(elapsed) + " / " + formatTime(m.durationMs)
-	bar := progressBar(elapsed, m.durationMs, 20)
-
-	body := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ffaa00")).Render("Now Playing") + "\n\n"
-	body += fmt.Sprintf(
-		"%s: %s\n%s: %s\n%s: %s\n%s: %d\n",
-		info.Render("State"), value.Render(state),
-		info.Render("Track"), value.Render(current),
-		info.Render("Progress"), value.Render(bar+"  "+progress),
-		info.Render("Volume"), m.volume,
-	)
-
-	return body
-}
-
-func (m model) appControlsView() string {
-	body := ""
-
-	if m.usingDefaultCfg {
-		body += lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(
-			"⚠️ Using default config\n\n")
-	}
-
-	plexControls := ""
-	if m.plexAuthenticated {
-		plexControls = "\n  1 Artists  2 Albums  3 Playlists"
-	}
-
-	controlsText := fmt.Sprintf("Controls:\n  ↑/↓ navigate\n  Enter select\n  [p / space] Play/Pause\n  n Next\n  b Previous\n  +/- Volume %s\n  q Quit", plexControls)
-	controls := lipgloss.NewStyle().MarginTop(1).Foreground(lipgloss.Color("#8888ff")).Render(controlsText)
-
-	return fmt.Sprintf("%s%s", body, controls)
-}
-
-// =====================
-// Playback Control Methods
-// =====================
-
-// togglePlayback toggles between play and pause
-func (m *model) togglePlayback() tea.Cmd {
-	if m.isPlaying {
-		m.sendCommand("playback/pause")
-		m.isPlaying = false
-		m.lastCommand = "Pause"
-	} else {
-		m.sendCommand("playback/play")
-		m.isPlaying = true
-		m.lastCommand = "Play"
-	}
-	return m.pollTimeline()
-}
-
-// nextTrack skips to the next track
-func (m *model) nextTrack() tea.Cmd {
-	m.sendCommand("playback/skipNext")
-	m.lastCommand = "Next"
-	return m.pollTimeline()
-}
-
-// previousTrack goes to the previous track
-func (m *model) previousTrack() tea.Cmd {
-	m.sendCommand("playback/skipPrevious")
-	m.lastCommand = "Previous"
-	return m.pollTimeline()
-}
-
-// adjustVolume changes the volume by the specified delta (range: -100 to +100)
-func (m *model) adjustVolume(delta int) tea.Cmd {
-	newVol := m.volume + delta
-	if newVol < 0 {
-		newVol = 0
-	} else if newVol > 100 {
-		newVol = 100
-	}
-
-	// Use setVolume to handle the actual volume change
-	m.setVolume(newVol)
-
-	// Update the status message
-	m.lastCommand = fmt.Sprintf("Volume %d%%", newVol)
-
-	// Return a command to update the timeline
-	return m.pollTimeline()
-}
-
-// seek seeks the current track by the specified number of seconds
-func (m *model) seek(seconds int) tea.Cmd {
-	// Calculate the new position in milliseconds
-	newPos := m.positionMs + (seconds * 1000)
-
-	// Ensure the position is within bounds
-	if newPos < 0 {
-		newPos = 0
-	} else if m.durationMs > 0 && newPos > m.durationMs {
-		newPos = m.durationMs
-	}
-
-	// Send the seek command with absolute position
-	m.sendCommand(fmt.Sprintf("playback/seekTo?time=%d", newPos))
-	m.lastCommand = fmt.Sprintf("Seek to %s", formatTime(newPos))
-
-	// Update the position immediately for better UX
-	m.positionMs = newPos
-	m.lastUpdate = time.Now()
-
-	return m.pollTimeline()
-}
-
-// toggleShuffle toggles shuffle mode
-func (m *model) toggleShuffle() tea.Cmd {
-	m.shuffle = !m.shuffle
-	if m.shuffle {
-		m.sendCommand("playback/shuffle/on")
-		m.lastCommand = "Shuffle ON"
-	} else {
-		m.sendCommand("playback/shuffle/off")
-		m.lastCommand = "Shuffle OFF"
-	}
-	return nil
-}
-
-// will use the config to cycle through the library options, it will check the current selected library and increment to the next one, if it is the last one it will go back to the first one
-func (m *model) cycleLibrary() tea.Cmd {
-	currentLibraryKey := m.config.PlexLibraryID
-
-	for i := range m.config.PlexLibraries {
-		if m.config.PlexLibraries[i].Key == currentLibraryKey {
-			if i == len(m.config.PlexLibraries)-1 {
-				m.config.PlexLibraryID = m.config.PlexLibraries[0].Key
-				m.config.PlexLibraryName = m.config.PlexLibraries[0].Title
-			} else {
-				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
-				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
-			}
-			cfgManager.Save(m.config)
-			// Return a command that will refresh the current panel
-			return m.refreshCurrentPanel()
-		}
-	}
-	return nil
 }
 
 // =====================

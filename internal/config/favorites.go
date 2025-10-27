@@ -10,7 +10,7 @@ import (
 // FavoriteItem represents a single favorite item
 type FavoriteItem struct {
 	Name        string `json:"name"`
-	Type        string `json:"type"` // "artist", "album", "track", "playlist", "station"
+	Type        string `json:"type"` // "artist", "album", "playlist"
 	MetadataKey string `json:"key"`
 }
 
@@ -61,7 +61,7 @@ func (fm *FavoritesManager) Load() (*Favorites, error) {
 
 // Save saves the favorites to disk
 func (fm *FavoritesManager) Save(favs *Favorites) error {
-	if err := os.MkdirAll(filepath.Dir(fm.favoritesPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fm.favoritesPath), 0o755); err != nil {
 		return err
 	}
 
@@ -71,7 +71,7 @@ func (fm *FavoritesManager) Save(favs *Favorites) error {
 	}
 
 	tempPath := fm.favoritesPath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
 		return err
 	}
 
