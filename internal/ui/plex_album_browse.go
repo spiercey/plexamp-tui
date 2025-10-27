@@ -6,6 +6,7 @@ import (
 
 	"plexamp-tui/internal/plex"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -96,6 +97,26 @@ func (m *model) initAlbumBrowse() {
 	m.albumList.Styles.Title = titleStyle
 	m.albumList.Styles.PaginationStyle = paginationStyle
 	m.albumList.Styles.HelpStyle = helpStyle
+	m.albumList.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "favs"),
+			),
+		}
+	}
+	m.albumList.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			key.NewBinding(
+				key.WithKeys("f"),
+				key.WithHelp("f", "Add/Remove from Favorites"),
+			),
+			key.NewBinding(
+				key.WithKeys("R"),
+				key.WithHelp("R", "Refresh Albums"),
+			),
+		}
+	}
 	if m.width > 0 && m.height > 0 {
 		m.albumList.SetSize(m.width/2-4, m.height-4)
 	}
