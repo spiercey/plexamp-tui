@@ -135,3 +135,7 @@ func getDefaultConfigPath() (string, error) {
 func (m *Manager) GetLogPath() string {
 	return filepath.Join(filepath.Dir(m.configPath), "plexamp-tui.log")
 }
+
+func (m *Manager) GetConfigDir() string {
+	return filepath.Dir(m.configPath)
+}

@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"plexamp-tui/internal/config"
+	"plexamp-tui/internal/database"
 	"plexamp-tui/internal/logger"
 	"plexamp-tui/internal/plex"
 	"plexamp-tui/internal/ui"
@@ -67,11 +69,25 @@ func main() {
 		return
 	}
 
-	favsManager, err = config.NewFavoritesManager()
+	// Initialize database
+	dbPath := filepath.Join(cfgManager.GetConfigDir(), "favorites.db")
+	db, err := database.New(dbPath)
+	if err != nil {
+		log.Fatal("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+
+	// Initialize favorites manager
+	favsManager, err := config.NewFavoritesManager(db)
 	if err != nil {
 		log.Fatal("Failed to initialize favorites manager: %v", err)
 	}
 
+	// Migrate from JSON if needed
+	jsonPath := filepath.Join(cfgManager.GetConfigDir(), "favorites.json")
+	if err := favsManager.MigrateFromJSON(jsonPath); err != nil {
+		log.Warn("Failed to migrate favorites from JSON: %v", err)
+	}
 	// Load favorites
 	favs, err := favsManager.Load()
 	if err != nil {

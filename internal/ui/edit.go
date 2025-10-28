@@ -219,41 +219,22 @@ func (m *model) savePlaybackEdit() error {
 		return fmt.Errorf("metadata key cannot be empty")
 	}
 
-	favsManager, err := config.NewFavoritesManager()
+	config.FavsManager.Add(config.FavoriteItem{
+		Name:        newName,
+		Type:        selectedType,
+		MetadataKey: newMetadataKey,
+	})
+
+	allFavs, err := config.FavsManager.List()
 	if err != nil {
 		return err
 	}
-	cfg, err := favsManager.Load()
-	if err != nil {
-		return err
-	}
-
-	// Update or add the value
-	if m.editIndex == -1 {
-		// Adding new item
-		cfg.Items = append(cfg.Items, config.FavoriteItem{
-			Name:        newName,
-			Type:        selectedType,
-			MetadataKey: newMetadataKey,
-		})
-	} else if m.editIndex < len(cfg.Items) {
-		// Editing existing item
-		cfg.Items[m.editIndex].Name = newName
-		cfg.Items[m.editIndex].Type = selectedType
-		cfg.Items[m.editIndex].MetadataKey = newMetadataKey
-	} else {
-		return fmt.Errorf("invalid index")
-	}
-
-	favsManager.Save(cfg)
-
 	// Update the list
 	var items []list.Item
-	for _, pb := range cfg.Items {
+	for _, pb := range allFavs {
 		items = append(items, item{pb.Name, pb.Type, pb.MetadataKey})
 	}
 	m.playbackList.SetItems(items)
-	m.playbackConfig = cfg
 
 	// Return to playback panel
 	m.panelMode = "playback"
@@ -330,6 +311,7 @@ func (m model) editPanelView() string {
 
 // deletePlaybackItem removes a playback item from the config
 func (m *model) deletePlaybackItem(index int) error {
+	favToRemove := m.playbackList.Items()[index].(item)
 	if index >= 0 && m.playbackConfig != nil && index < len(m.playbackConfig.Items) {
 		m.playbackConfig.Items = append(m.playbackConfig.Items[:index], m.playbackConfig.Items[index+1:]...)
 	}
@@ -341,15 +323,20 @@ func (m *model) deletePlaybackItem(index int) error {
 	}
 	m.playbackList.SetItems(items)
 
-	// Save to file
-	favsManager.Save(m.playbackConfig)
+	if err := favsManager.Remove(favToRemove.Type, favToRemove.MetadataKey); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 func (m *model) savePlaybackItem(name string, k string, t string) error {
-	m.playbackConfig.Items = append(m.playbackConfig.Items, config.FavoriteItem{Name: name, MetadataKey: k, Type: t})
+	fav := config.FavoriteItem{Name: name, Type: t, MetadataKey: k}
+	m.playbackConfig.Items = append(m.playbackConfig.Items, fav)
 	m.playbackList.SetItems(append(m.playbackList.Items(), item{Name: name, MetadataKey: k, Type: t}))
-	favsManager.Save(m.playbackConfig)
+
+	if err := favsManager.Add(fav); err != nil {
+		return err
+	}
 	return nil
 }
