@@ -192,6 +192,7 @@ func (m *model) handleArtistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.artistList.SelectedItem().(artistItem); ok {
 				log.Debug(fmt.Sprintf("Playing artist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s", selected.title)
+				m.markPlaybackStarting()
 				return m, m.playArtistCmd(selected.ratingKey)
 			}
 			return m, nil
@@ -213,6 +214,7 @@ func (m *model) handleArtistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.artistList.SelectedItem().(artistItem); ok {
 				log.Debug(fmt.Sprintf("Playing artist radio: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s Radio", selected.title)
+				m.markPlaybackStarting()
 				return m, m.playArtistRadioCmd(selected.ratingKey)
 			}
 			return m, nil

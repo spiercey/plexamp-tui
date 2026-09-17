@@ -189,6 +189,7 @@ func (m *model) handleAlbumBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.albumList.SelectedItem().(albumItem); ok {
 				log.Debug(fmt.Sprintf("Playing album: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s", selected.title)
+				m.markPlaybackStarting()
 				return m, m.playAlbumCmd(selected.ratingKey)
 			}
 			return m, nil

@@ -52,6 +52,7 @@ type model struct {
 	durationMs        int
 	positionMs        int
 	lastUpdate        time.Time
+	playIntentUntil   time.Time // Guards optimistic playing state while a player starts up
 	usingDefaultCfg   bool
 	shuffle           bool // Tracks shuffle state
 	plexAuthenticated bool // Plex authentication status
@@ -121,6 +122,10 @@ var (
 	log         *logger.Logger
 	favsManager *config.FavoritesManager
 )
+
+// timelineClient bounds timeline polls so an unreachable player cannot stall the
+// poll loop or leave requests piling up behind the tick.
+var timelineClient = &http.Client{Timeout: 3 * time.Second}
 
 func NewUiManager(logger *logger.Logger, config *config.Config, manager *config.Manager,
 	favorites *config.Favorites, client *plex.PlexClient, favoritesMgr *config.FavoritesManager,
@@ -232,20 +237,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverSelectMsg:
 		if msg.err != nil {
+			log.Debug(fmt.Sprintf("Error selecting server: %v", msg.err))
+			m.lastCommand = "Server Selection Failed"
 			m.status = "Error selecting server: " + msg.err.Error()
 			return m, nil
 		}
 		if msg.success {
 			m.config.ServerID = msg.server.clientIdentifier
-			serverAddr := msg.server.address + ":" + msg.server.port
-			if msg.server.scheme != "" {
-				serverAddr = msg.server.scheme + "://" + serverAddr
-			}
-			m.config.PlexServerAddr = serverAddr
+			m.config.PlexServerAddr = msg.server.connectionURL()
 			m.config.PlexServerName = msg.server.title
 			m.config.PlexLibraries = msg.libraries
 
-			found := false
 			if len(msg.libraries) == 0 {
 				log.Debug("No libraries found on this server")
 				m.panelMode = "playback"
@@ -254,19 +256,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// check if new library list has our configured library
+			// Section keys are assigned per-server, so the key has to be re-resolved
+			// even when the configured library name exists on the new server.
+			selectedLibrary := msg.libraries[0]
 			for _, lib := range msg.libraries {
 				if lib.Title == m.config.PlexLibraryName {
-					found = true
+					selectedLibrary = lib
 					break
 				}
 			}
-
-			if !found {
+			if selectedLibrary.Title != m.config.PlexLibraryName {
 				log.Debug("Current Library not found on this server, using first library")
-				m.config.PlexLibraryName = msg.libraries[0].Title
-				m.config.PlexLibraryID = msg.libraries[0].Key
 			}
+			m.config.PlexLibraryName = selectedLibrary.Title
+			m.config.PlexLibraryID = selectedLibrary.Key
 
 			log.Debug(fmt.Sprintf("Saving server config: %v", m.config))
 			cfgManager.Save(m.config)
@@ -449,11 +452,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.currentTrack = msg.TrackText
-		m.isPlaying = msg.IsPlaying
 		m.durationMs = msg.Duration
 		m.positionMs = msg.Position
 		m.volume = msg.Volume
 		m.lastUpdate = time.Now()
+
+		// A player still loading a new queue reports "paused", so hold the
+		// optimistic state until it confirms playback or the grace period lapses.
+		if msg.IsPlaying {
+			m.isPlaying = true
+			m.clearPlaybackIntent()
+		} else if time.Now().After(m.playIntentUntil) {
+			m.isPlaying = false
+		}
 		return m, nil
 
 	case trackMsg:
@@ -471,6 +482,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.lastCommand = "Playback Failed"
 			m.status = fmt.Sprintf("Playback error: %v", msg.err)
+			m.isPlaying = false
+			m.clearPlaybackIntent()
 		}
 		return m, nil
 
@@ -645,8 +658,11 @@ func (m *model) pollTimeline() tea.Cmd {
 	selected := m.selected
 
 	return func() tea.Msg {
-		url := fmt.Sprintf("http://%s:32500/player/timeline/poll?wait=1&includeMetadata=1&commandID=1&type=music", selected)
-		resp, err := http.Get(url)
+		// wait=0 returns the current timeline straight away. wait=1 long-polls
+		// until the timeline changes, which delays the first result by seconds and
+		// stacks up requests behind the fixed poll interval.
+		url := fmt.Sprintf("http://%s:32500/player/timeline/poll?wait=0&includeMetadata=1&commandID=1&type=music", selected)
+		resp, err := timelineClient.Get(url)
 		if err != nil {
 			return trackMsgWithState{RequestID: reqID, TrackText: "", IsPlaying: false, Duration: 0, Position: 0, Volume: 0}
 		}

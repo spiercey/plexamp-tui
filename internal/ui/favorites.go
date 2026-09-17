@@ -27,6 +27,7 @@ func (m *model) triggerFavoriteRadioPlayback(item config.FavoriteItem) tea.Cmd {
 	}
 
 	m.lastCommand = fmt.Sprintf("Playing radio for %s", item.Name)
+	m.markPlaybackStarting()
 
 	return func() tea.Msg { return m.playArtistRadioCmd(item.MetadataKey)() }
 }
@@ -49,12 +50,15 @@ func (m *model) triggerFavoritePlayback(item config.FavoriteItem) tea.Cmd {
 	switch item.Type {
 	case "artist":
 		log.Debug(fmt.Sprintf("Playing artist: %s", item.Name))
+		m.markPlaybackStarting()
 		return func() tea.Msg { return m.playArtistCmd(item.MetadataKey)() }
 	case "album":
 		log.Debug(fmt.Sprintf("Playing album: %s", item.Name))
+		m.markPlaybackStarting()
 		return func() tea.Msg { return m.playAlbumCmd(item.MetadataKey)() }
 	case "playlist":
 		log.Debug(fmt.Sprintf("Playing playlist: %s", item.Name))
+		m.markPlaybackStarting()
 		return func() tea.Msg { return m.playPlaylistCmd(item.MetadataKey)() }
 	default:
 		log.Debug(fmt.Sprintf("Unknown type: %s", item.Type))

@@ -180,6 +180,7 @@ func (m *model) handlePlaylistBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected, ok := m.playlistList.SelectedItem().(playlistItem); ok {
 				log.Debug(fmt.Sprintf("Playing playlist: %s (ratingKey: %s)", selected.title, selected.ratingKey))
 				m.lastCommand = fmt.Sprintf("Playing %s", selected.title)
+				m.markPlaybackStarting()
 				return m, m.playPlaylistCmd(selected.ratingKey)
 			}
 			return m, nil
