@@ -17,6 +17,7 @@ type serverItem struct {
 	address          string
 	local            string
 	port             string
+	uri              string
 }
 
 // serversFetchedMsg is a message containing fetched servers
@@ -43,6 +44,20 @@ func (i serverItem) Description() string { return "" }
 // FilterValue implements list.Item
 func (i serverItem) FilterValue() string {
 	return i.title + " " + i.clientIdentifier
+}
+
+// connectionURL returns the base URL to use for API calls against this server.
+// Plex serves HTTPS with a certificate issued for a *.plex.direct hostname, which
+// has no IP SANs, so the advertised uri must be used rather than the raw address.
+func (i serverItem) connectionURL() string {
+	if i.uri != "" {
+		return i.uri
+	}
+	addr := fmt.Sprintf("%s:%s", i.address, i.port)
+	if i.scheme != "" {
+		return fmt.Sprintf("%s://%s", i.scheme, addr)
+	}
+	return addr
 }
 
 // fetchServersCmd fetches servers from the Plex server
@@ -109,15 +124,12 @@ func (m *model) selectServerCmd(server serverItem) tea.Cmd {
 
 	return func() tea.Msg {
 
-		serverAddr := fmt.Sprintf("%s:%s", server.address, server.port)
-		if server.scheme != "" {
-			serverAddr = fmt.Sprintf("%s://%s", server.scheme, serverAddr)
-		}
-		libraries, err := plexClient.FetchLibrary(serverAddr)
+		libraries, err := plexClient.FetchLibrary(server.connectionURL())
 		log.Debug(fmt.Sprintf("Fetched libraries: %v", libraries))
 
 		if err != nil {
 			log.Debug(fmt.Sprintf("Error fetching libraries: %v", err))
+			return serverSelectMsg{success: false, server: server, err: err}
 		}
 
 		// When a server is selected we will write the serverId and serverAddress:port to the config file and save it to disk
@@ -193,6 +205,7 @@ func (m *model) handleServerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				address:          server.Address,
 				local:            server.Local,
 				port:             server.Port,
+				uri:              server.URI,
 			})
 		}
 
@@ -216,7 +229,7 @@ func (m *model) handleServerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.serverList.FilterInput.SetValue(filterValue)
 		}
 		m.status = fmt.Sprintf("Loaded %d servers", len(msg.servers))
-		log.Debug(fmt.Sprintf("Updated model with new server list. List has %d items", m.serverList.VisibleItems()))
+		log.Debug(fmt.Sprintf("Updated model with new server list. List has %d items", len(m.serverList.VisibleItems())))
 
 		// Force a redraw
 		return m, tea.Batch(tea.ClearScreen, func() tea.Msg { return nil })

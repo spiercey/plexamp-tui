@@ -42,8 +42,28 @@ func (m model) playbackStatusView() string {
 // Playback Control Methods
 // =====================
 
+// playIntentGrace bounds how long the optimistic playing state survives without
+// confirmation from the player.
+const playIntentGrace = 8 * time.Second
+
+// markPlaybackStarting reports playback as active right away. Players need a few
+// seconds to build the play queue and keep reporting state="paused" until then,
+// during which a play/pause press would otherwise be sent as another play.
+func (m *model) markPlaybackStarting() {
+	m.isPlaying = true
+	m.playIntentUntil = time.Now().Add(playIntentGrace)
+}
+
+// clearPlaybackIntent hands authority over the playing state back to the player.
+func (m *model) clearPlaybackIntent() {
+	m.playIntentUntil = time.Time{}
+}
+
 // togglePlayback toggles between play and pause
 func (m *model) togglePlayback() tea.Cmd {
+	// An explicit press always wins over an in-flight optimistic state.
+	m.clearPlaybackIntent()
+
 	if m.isPlaying {
 		m.sendCommand("playback/pause")
 		m.isPlaying = false
@@ -127,21 +147,24 @@ func (m *model) toggleShuffle() tea.Cmd {
 
 // will use the config to cycle through the library options, it will check the current selected library and increment to the next one, if it is the last one it will go back to the first one
 func (m *model) cycleLibrary() tea.Cmd {
-	currentLibraryKey := m.config.PlexLibraryID
+	if len(m.config.PlexLibraries) == 0 {
+		return nil
+	}
 
+	// Default to the first library so a key that isn't in the list (left over from a
+	// previously selected server) can't leave cycling permanently stuck.
+	next := 0
 	for i := range m.config.PlexLibraries {
-		if m.config.PlexLibraries[i].Key == currentLibraryKey {
-			if i == len(m.config.PlexLibraries)-1 {
-				m.config.PlexLibraryID = m.config.PlexLibraries[0].Key
-				m.config.PlexLibraryName = m.config.PlexLibraries[0].Title
-			} else {
-				m.config.PlexLibraryID = m.config.PlexLibraries[i+1].Key
-				m.config.PlexLibraryName = m.config.PlexLibraries[i+1].Title
-			}
-			cfgManager.Save(m.config)
-			// Return a command that will refresh the current panel
-			return m.refreshCurrentPanel()
+		if m.config.PlexLibraries[i].Key == m.config.PlexLibraryID {
+			next = (i + 1) % len(m.config.PlexLibraries)
+			break
 		}
 	}
-	return nil
+
+	m.config.PlexLibraryID = m.config.PlexLibraries[next].Key
+	m.config.PlexLibraryName = m.config.PlexLibraries[next].Title
+	cfgManager.Save(m.config)
+
+	// Return a command that will refresh the current panel
+	return m.refreshCurrentPanel()
 }

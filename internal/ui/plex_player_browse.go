@@ -63,7 +63,7 @@ func (m *model) fetchPlayersCmd() tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		players, err := plexClient.GetPlexPlayers()
+		players, err := plexClient.GetAllPlayers()
 		return playersFetchedMsg{players: players, err: err}
 	}
 }
@@ -194,7 +194,7 @@ func (m *model) handlePlayerBrowseUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.playerList.FilterInput.SetValue(filterValue)
 		}
 		m.status = fmt.Sprintf("Loaded %d players", len(msg.players))
-		log.Debug(fmt.Sprintf("Updated model with new player list. List has %d items", m.playerList.VisibleItems()))
+		log.Debug(fmt.Sprintf("Updated model with new player list. List has %d items", len(m.playerList.VisibleItems())))
 
 		// Force a redraw
 		return m, tea.Batch(tea.ClearScreen, func() tea.Msg { return nil })
