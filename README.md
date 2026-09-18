@@ -74,6 +74,21 @@ You can specify a custom config file with:
 ```bash
 ./plexamp-tui --config /path/to/config.json
 ```
+
+### Local Player Scanning
+
+Players are listed from `plex.tv`, which covers any player that has checked in
+recently. Some players register slowly, so if one is missing from the list you
+can also scan the local network for it:
+
+```bash
+./plexamp-tui --scan-local
+```
+
+The scan probes every address on your local subnet and merges anything it finds
+with the `plex.tv` results, which adds roughly a second to each player list
+refresh. Leave it off unless a player you expect is absent.
+
 ---
 
 ## License

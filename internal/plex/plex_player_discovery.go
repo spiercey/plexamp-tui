@@ -36,13 +36,21 @@ type playerResource struct {
 	ProtocolCapabilities string `xml:"protocolCapabilities,attr"`
 }
 
-// GetAllPlayers returns the players registered with plex.tv merged with players
-// discovered on the local network. Purely local players (such as Caldera Music)
-// never register with the Plex cloud, so the sweep is the only way to see them.
+// GetAllPlayers returns the players registered with plex.tv, optionally merged
+// with players found by sweeping the local network. plex.tv lists every player
+// that has checked in recently, so the sweep is only needed for players that
+// register slowly or not at all.
 func (p *PlexClient) GetAllPlayers() ([]PlexConnectionSelection, error) {
 	cloudPlayers, err := p.GetPlexPlayers()
 	if err != nil {
-		p.logger.Debug(fmt.Sprintf("Cloud player lookup failed, falling back to local discovery: %v", err))
+		p.logger.Debug(fmt.Sprintf("Cloud player lookup failed: %v", err))
+	}
+
+	if !p.scanLocalPlayers {
+		if err != nil {
+			return nil, err
+		}
+		return cloudPlayers, nil
 	}
 
 	seen := make(map[string]struct{}, len(cloudPlayers))
