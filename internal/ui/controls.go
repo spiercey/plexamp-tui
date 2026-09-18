@@ -37,7 +37,7 @@ func (m *model) handleControl(key string) (tea.Cmd, bool) {
 	case "-", "[": // Volume down
 		return m.adjustVolume(-5), true
 
-	case "h": // Toggle shuffle
+	case "s": // Toggle shuffle
 		return m.toggleShuffle(), true
 
 	case "tab": // Cycle library

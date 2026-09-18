@@ -26,7 +26,7 @@ func (m model) footerView() string {
 	}
 	// --- Left side (your existing info)
 	left := ""
-	left += fmt.Sprintf("%s %s: %s \n", header.Render("Shuffle"), info.Render("(h)"), shuffleValue)
+	left += fmt.Sprintf("%s %s: %s \n", header.Render("Shuffle"), info.Render("(s)"), shuffleValue)
 	if len(m.config.PlexLibraries) > 0 {
 		left += fmt.Sprintf("%s %s: ", header.Render("Library"), info.Render("(Tab)"))
 		for _, library := range m.config.PlexLibraries {
