@@ -34,6 +34,8 @@ func main() {
 	configFlag := flag.String("config", "", "Path to configuration file (optional)")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	authFlag := flag.Bool("auth", false, "Authenticate with Plex.tv")
+	scanLocalFlag := flag.Bool("scan-local", false,
+		"Also scan the local network for players that have not registered with plex.tv (slower)")
 	flag.Parse()
 
 	// Initialize config
@@ -56,6 +58,7 @@ func main() {
 	defer log.Close()
 
 	plexClient = plex.NewPlexClient(log)
+	plexClient.SetLocalPlayerScan(*scanLocalFlag)
 
 	// Handle Plex authentication
 	if *authFlag {
