@@ -16,6 +16,9 @@ import (
 const (
 	plexListenBaseURL = "https://listen.plex.tv"
 	plexURIPrefix     = "server://%s/com.plexapp.plugins.library/library/metadata/%s"
+	// Playlists are not addressed under /library/metadata; the server reports
+	// their key as /playlists/<ratingKey>/items.
+	plexPlaylistURIPrefix = "server://%s/com.plexapp.plugins.library/playlists/%s/items"
 )
 
 // PlaybackURLBuilder handles building and sending Plex playback URLs
@@ -32,7 +35,7 @@ func NewPlaybackURLBuilder(serverID string) *PlaybackURLBuilder {
 
 // BuildPlaylistURL builds a URL for playing a playlist
 func (b *PlaybackURLBuilder) BuildPlaylistURL(metadataID string) string {
-	uri := fmt.Sprintf(plexURIPrefix, b.serverID, metadataID)
+	uri := fmt.Sprintf(plexPlaylistURIPrefix, b.serverID, metadataID)
 	u := fmt.Sprintf("%s/player/playback/createPlayQueue?source=%s&uri=%s&playlistID=%s&type=audio", plexListenBaseURL, url.QueryEscape(b.serverID), url.QueryEscape(uri), metadataID)
 	return u
 }
@@ -47,9 +50,11 @@ func (b *PlaybackURLBuilder) BuildPlayQueueURL(metadataID string) string {
 
 // BuildArtistRadioURL builds a URL for playing artist radio/station
 // This requires a station UUID in addition to the metadata ID
+// The station's own type=10 belongs inside the station key; the play queue
+// itself is type=audio.
 func (b *PlaybackURLBuilder) BuildArtistRadioURL(metadataID, stationUUID string) string {
-	uri := fmt.Sprintf(plexURIPrefix+"/station/%s", b.serverID, metadataID, stationUUID)
-	u := fmt.Sprintf("%s/player/playback/playMedia?type=10&type=audio&uri=%s",
+	uri := fmt.Sprintf(plexURIPrefix+"/station/%s?type=10", b.serverID, metadataID, stationUUID)
+	u := fmt.Sprintf("%s/player/playback/createPlayQueue?uri=%s&type=audio",
 		plexListenBaseURL, url.QueryEscape(uri))
 	return u
 }
